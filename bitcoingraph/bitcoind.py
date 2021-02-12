@@ -90,7 +90,7 @@ class JSONRPCInterface:
         if response.status_code not in (200, 500):
             raise BitcoindException("RPC connection failure: " +
                                     str(response.status_code) + ' ' +
-                                    response.reason)
+                                    response.reason + ' ' + response.text)
         responseJSON = response.json()
         if 'error' in responseJSON and responseJSON['error'] is not None:
             raise BitcoindException('Error in RPC call: ' +
