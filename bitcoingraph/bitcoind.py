@@ -2,6 +2,7 @@
 Bitcoin Core JSON-RPC interface.
 
 """
+import logging
 
 import requests
 import json
@@ -129,6 +130,8 @@ class BitcoinProxy:
         self.method = method
         rest_url = 'http://{}:{}/rest/'.format(host, port)
         rpc_url = 'http://{}:{}@{}:{}/'.format(rpc_user, rpc_pass, host, port)
+        print(f'REST URL is: {rest_url}')
+        print(f'RPC URL is: {rpc_url}')
         self._jsonrpc_proxy = JSONRPCInterface(rpc_url)
         if method == 'REST':
             self._rest_proxy = RESTInterface(rest_url)
@@ -175,7 +178,7 @@ class BitcoinProxy:
         :return: JSON string with state info
         :rtype: str
         """
-        r = self._jsonrpc_proxy.call('getinfo')
+        r = self._jsonrpc_proxy.call('getblockchaininfo')
         return r
 
     def getrawtransaction(self, tx_id, verbose=1):

@@ -29,7 +29,6 @@ parser.add_argument("-u", "--user", required=True,
 parser.add_argument("-p", "--password", required=True,
                     help="Bitcoin Core RPC password")
 
-
 if len(sys.argv) <= 1:
     parser.print_help()
     sys.exit(1)

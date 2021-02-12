@@ -48,10 +48,10 @@ class BitcoinGraph:
         Blockchain object.
         """
         try:
-            logger.debug("Connecting to Bitcoin Core at {}".format(config['host']))
+            print("Connecting to Bitcoin Core at {}".format(config['host']))
             bc_proxy = BitcoinProxy(**config)
             bc_proxy.getinfo()
-            logger.debug("Connection successful.")
+            print("Connection successful.")
             blockchain = Blockchain(bc_proxy)
             return blockchain
         except BitcoindException as exc:

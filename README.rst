@@ -50,7 +50,7 @@ following cURL request (with adapted username and password):
 
 ::
 
-    curl --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getinfo", "params": [] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/
+    curl --data-binary '{"jsonrpc": "1.0", "id":"curltext", "method": "getblockchaininfo", "params": [] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/
 
 Third, since Bitcoingraph needs to access non-wallet blockchain
 transactions by their ids, you need to enable the transaction index in
