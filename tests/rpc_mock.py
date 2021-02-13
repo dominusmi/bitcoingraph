@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 
 
-TEST_DATA_PATH = "tests/data"
+TEST_DATA_PATH = "./data"
 
 
 class BitcoinProxyMock(BitcoinProxy):
