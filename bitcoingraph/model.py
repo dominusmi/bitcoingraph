@@ -213,5 +213,9 @@ class Output:
         self.type = json_data['scriptPubKey']['type']
         if 'addresses' in json_data['scriptPubKey']:
             self.addresses = json_data['scriptPubKey']['addresses']
+        # Check if scriptPubKey indicates P2PK transaction
+        # which is in the format of '<pubkey> OP_CHECKSIG'
+        elif json_data['scriptPubKey']['asm'].endswith(' OP_CHECKSIG'):
+            self.addresses = 'pk_' + json_data['scriptPubKey']['asm'][:-12]
         else:
             self.addresses = []
