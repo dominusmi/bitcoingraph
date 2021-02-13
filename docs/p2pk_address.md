@@ -79,3 +79,12 @@ have different outputs in the old vs new versions of `bitcoind`
         "weight": 536
     }
 
+## Solution
+
+We can identify P2PK transactions using the format of its `scriptPubKey` as described here: 
+https://programmingblockchain.gitbook.io/programmingblockchain/other_types_of_ownership/p2pk-h-_pay_to_public_key_-hash
+
+We can store the address of these transactions as its public key with `pk_` prefix to denote it is 
+not an address, but a public key. For example: 
+
+    pk_04d190840cfdae05af3d2febca52b0466b6efb02b44036a5d0d70659a53f7b84b736c5a05ed81e90af70985d59ffb3d1b91364f70b4d2b3b7553e177b1ceaff322
