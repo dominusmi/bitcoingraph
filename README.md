@@ -27,6 +27,12 @@ Second, you must make sure that your bitcoin client accepts JSON-RPC connections
 
     # Listen for RPC connections on this TCP port:
     rpcport=8332
+    
+    # Index non-wallet transactions (required for fast txn and block lookups)
+    txindex=1
+
+    # Enable unauthenticated REST API
+    rest=
 
 Test whether the JSON-RPC interface is working by starting your Bitcoin Core peer (...waiting until it finished startup...) and using the following cURL request (with adapted username and password):
 
