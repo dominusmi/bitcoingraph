@@ -127,33 +127,32 @@ Two additional files are created:
 Download and install [Neo4J][neo4j] community edition (>= 2.3.0):
 
     tar xvfz neo4j-community-2.3.0-unix.tar.gz
-    export NEO4J_HOME=[PATH_TO_NEO4J_INSTALLATION]
 
 Test Neo4J installation:
 
-    $NEO4J_HOME/bin/neo4j start
+    sudo neo4j start
     http://localhost:7474/
 
 
 Install  and make sure is not running and pre-existing databases are removed:
 
-    $NEO4J_HOME/bin/neo4j stop
-    rm -rf $NEO4J_HOME/data/*
+    sudo neo4j stop
+    rm -rf /var/lib/neo4j/data/*
 
 
 Switch back into the dump directory and create a new database using Neo4J's CSV importer tool:
 
-    $NEO4J_HOME/bin/neo4j-import --into $NEO4J_HOME/data/graph.db \
-    --nodes:Block blocks_header.csv,blocks.csv \
-    --nodes:Transaction transactions_header.csv,transactions.csv \
-    --nodes:Output outputs_header.csv,outputs.csv \
-    --nodes:Address addresses_header.csv,addresses.csv \
-    --nodes:Entity entities.csv \
-    --relationships:CONTAINS rel_block_tx_header.csv,rel_block_tx.csv \
-    --relationships:OUTPUT rel_tx_output_header.csv,rel_tx_output.csv \
-    --relationships:INPUT rel_input_header.csv,rel_input.csv \
-    --relationships:USES rel_output_address_header.csv,rel_output_address.csv \
-    --relationships:BELONGS_TO rel_address_entity.csv
+    sudo neo4j-admin import \
+    --nodes=:Block=blocks_header.csv,blocks.csv \
+    --nodes=:Transaction=transactions_header.csv,transactions.csv \
+    --nodes=:Output=outputs_header.csv,outputs.csv \
+    --nodes=:Address=addresses_header.csv,addresses.csv \
+    --nodes=:Entity=entities.csv \
+    --relationships=CONTAINS=rel_block_tx_header.csv,rel_block_tx.csv \
+    --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv \
+    --relationships=INPUT=rel_input_header.csv,rel_input.csv \
+    --relationships=USES=rel_output_address_header.csv,rel_output_address.csv \
+    --relationships=BELONGS_TO=rel_address_entity.csv
 
 
 Then, start the Neo4J shell...:
@@ -169,7 +168,7 @@ and create the following uniquness constraints:
 
 Finally start Neo4J
 
-    $NEO4J_HOME/bin/neo4j start
+    sudo neo4j start
 
 
 ### Step 4: Enrich transaction graph with identity information

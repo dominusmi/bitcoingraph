@@ -130,7 +130,7 @@ class TestTxInput(TestBlockchainObject):
     def test_addresses(self):
         tx = self.blockchain.get_transaction(TX2)
         tx_input = tx.inputs[0]
-        self.assertEqual("1BNwxHGaFbeUBitpjy2AsKpJ29Ybxntqvb",
+        self.assertEqual("12bCGuqBso4K8pKoNFXHUR4eMZg8j4xqN3",
                          tx_input.output.addresses[0])
 
 
@@ -158,7 +158,7 @@ class TestTxOutput(TestBlockchainObject):
         Test if empty list is return when no output addresses are present.
         """
         tx = self.blockchain.get_transaction(TXE)
-        self.assertEqual(["152hHAq6kHoLw2FCT8G37uLEts6oFVjZKt"],
+        self.assertEqual(["pk_0469b7eaf1cca8a7c8592ad49313b4cb6474a845604456d48b4b252904e1d61ceda95ac987ad163e957bdbd2da2736861fbfad93dbf8e0a218308a49d94ab9a077"],
                          tx.outputs[0].addresses)
         self.assertFalse(tx.outputs[1].addresses)
 
