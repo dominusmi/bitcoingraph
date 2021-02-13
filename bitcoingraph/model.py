@@ -216,6 +216,6 @@ class Output:
         # Check if scriptPubKey.type indicates P2PK transaction, we then extract the pubkey as address from asm object
         # which is in the format of '<pubkey> OP_CHECKSIG'
         elif json_data['scriptPubKey']['type'] == 'pubkey':
-            self.addresses = 'pk_' + json_data['scriptPubKey']['asm'][0:130]
+            self.addresses = ['pk_' + json_data['scriptPubKey']['asm'][0:130]]
         else:
             self.addresses = []
