@@ -93,6 +93,14 @@ class TestBlock(TestBlockchainObject):
         for tx in txs:
             self.assertIsNotNone(tx.txid)
 
+    def test_difficulty(self):
+        block = self.blockchain.get_block_by_hash(BH1)
+        self.assertAlmostEqual(block.difficulty, 14484.1623612254)
+
+    def test_prev_hash(self):
+        block = self.blockchain.get_block_by_hash(BH1)
+        self.assertEqual(block.previous_block.hash, "0000000000002103637910d267190996687fb095880d432c6531a527c8ec53d1")
+
 
 class TestTxInput(TestBlockchainObject):
 
