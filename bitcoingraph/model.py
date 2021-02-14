@@ -13,10 +13,12 @@ class Block:
             self.__has_previous_block = None
             self.__has_next_block = None
             self.__transactions = None
+            self.__difficulty = None
         else:
             self.__hash = json_data['hash']
             self.__height = json_data['height']
             self.__timestamp = json_data['time']
+            self.__difficulty = json_data['difficulty']
             if 'previousblockhash' in json_data:
                 self.__has_previous_block = True
                 self.__previous_block = Block(blockchain, json_data['previousblockhash'],
@@ -52,6 +54,12 @@ class Block:
         if self.__timestamp is None:
             self._load()
         return self.__timestamp
+
+    @property
+    def difficulty(self):
+        if self.__difficulty is None:
+            self._load()
+        return self.__difficulty
 
     def formatted_time(self):
         return to_time(self.timestamp)
@@ -95,6 +103,7 @@ class Block:
         self.__has_next_block = block.has_next_block()
         self.__next_block = block.next_block
         self.__transactions = block.transactions
+        self.__difficulty = block.difficulty
 
 
 class Transaction:

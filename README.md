@@ -143,7 +143,7 @@ Test Neo4J installation:
 Install  and make sure is not running and pre-existing databases are removed:
 
     sudo neo4j stop
-    rm -rf /var/lib/neo4j/data/*
+    sudo rm -rf /var/lib/neo4j/data/*
 
 
 Switch back into the dump directory and create a new database using Neo4J's CSV importer tool:
@@ -155,6 +155,7 @@ Switch back into the dump directory and create a new database using Neo4J's CSV 
     --nodes=:Address=addresses_header.csv,addresses.csv \
     --nodes=:Entity=entities.csv \
     --relationships=CONTAINS=rel_block_tx_header.csv,rel_block_tx.csv \
+    --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv \
     --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv \
     --relationships=INPUT=rel_input_header.csv,rel_input.csv \
     --relationships=USES=rel_output_address_header.csv,rel_output_address.csv \

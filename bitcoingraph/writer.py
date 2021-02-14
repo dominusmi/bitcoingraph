@@ -12,11 +12,12 @@ class CSVDumpWriter:
         if not os.path.exists(output_path):
             os.makedirs(output_path)
 
-        self._write_header('blocks', ['hash:ID(Block)', 'height:int', 'timestamp:int'])
+        self._write_header('blocks', ['hash:ID(Block)', 'height:int', 'timestamp:int', 'difficulty:double'])
         self._write_header('transactions', ['txid:ID(Transaction)', 'coinbase:boolean'])
         self._write_header('outputs', ['txid_n:ID(Output)', 'n:int', 'value:double', 'type'])
         self._write_header('addresses', ['address:ID(Address)'])
         self._write_header('rel_block_tx', ['hash:START_ID(Block)', 'txid:END_ID(Transaction)'])
+        self._write_header('rel_block_block', ['hash:START_ID(Block)', 'prevblockhash:END_ID(Block)'])
         self._write_header('rel_tx_output',
                            ['txid:START_ID(Transaction)', 'txid_n:END_ID(Output)'])
         self._write_header('rel_input', ['txid:END_ID(Transaction)', 'txid_n:START_ID(Output)'])
@@ -29,6 +30,7 @@ class CSVDumpWriter:
         self._outputs_file = open(self._get_path('outputs'), 'a')
         self._addresses_file = open(self._get_path('addresses'), 'a')
         self._rel_block_tx_file = open(self._get_path('rel_block_tx'), 'a')
+        self._rel_block_block_file = open(self._get_path('rel_block_block'), 'a')
         self._rel_tx_output_file = open(self._get_path('rel_tx_output'), 'a')
         self._rel_input_file = open(self._get_path('rel_input'), 'a')
         self._rel_output_address_file = open(self._get_path('rel_output_address'), 'a')
@@ -38,6 +40,7 @@ class CSVDumpWriter:
         self._output_writer = csv.writer(self._outputs_file)
         self._address_writer = csv.writer(self._addresses_file)
         self._rel_block_tx_writer = csv.writer(self._rel_block_tx_file)
+        self._rel_block_block_writer = csv.writer(self._rel_block_block_file)
         self._rel_tx_output_writer = csv.writer(self._rel_tx_output_file)
         self._rel_input_writer = csv.writer(self._rel_input_file)
         self._rel_output_address_writer = csv.writer(self._rel_output_address_file)
@@ -71,7 +74,10 @@ class CSVDumpWriter:
         def a_b(a, b):
             return '{}_{}'.format(a, b)
 
-        self._block_writer.writerow([block.hash, block.height, block.timestamp])
+        self._block_writer.writerow([block.hash, block.height, block.timestamp, block.difficulty])
+        if block.has_previous_block():
+            self._rel_block_block_writer.writerow([block.hash, block.previous_block.hash])
+
         for tx in block.transactions:
             self._transaction_writer.writerow([tx.txid, tx.is_coinbase()])
             self._rel_block_tx_writer.writerow([block.hash, tx.txid])
