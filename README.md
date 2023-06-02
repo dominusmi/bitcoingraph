@@ -223,7 +223,8 @@ Bitcoingraph provides a synchronisation script, which reads blocks from bitcoind
 
 ## License
 
-This library is release Open Source under the [MIT license](http://opensource.org/licenses/MIT).
+This original library is released under the [MIT license](http://opensource.org/licenses/MIT).
+All changes on this fork are released under [GPL 3 license](https://www.gnu.org/licenses/gpl-3.0.html)
 
 [bc_core]: https://github.com/bitcoin/bitcoin "Bitcoin Core"
 [bc_conf]: https://en.bitcoin.it/wiki/Running_Bitcoin#Bitcoin.conf_Configuration_File "Bitcoin Core configuration file"
