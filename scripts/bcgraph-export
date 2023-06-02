@@ -3,6 +3,7 @@
 import argparse
 import sys
 from bitcoingraph import BitcoinGraph
+from bitcoingraph.bitcoind import SSHTunnel
 
 
 def progress(p=0):
@@ -28,21 +29,36 @@ parser.add_argument("-u", "--user", required=True,
                     help="Bitcoin Core RPC username")
 parser.add_argument("-p", "--password", required=True,
                     help="Bitcoin Core RPC password")
+parser.add_argument("-H", "--host", default="localhost",
+                    help="Bitcoin Core host")
+parser.add_argument("-P", "--port", default=8332, type=int,
+                    help="Bitcoin Core port")
+parser.add_argument("--ssh",
+                    help="Path containing paramiko ssh configs in json format")
+parser.add_argument("--cache", type=str,
+                    help="If provided, should be a string to an existing directory in "
+                         "which to save/load .json block files. Only used with REST method")
 
-if len(sys.argv) <= 1:
-    parser.print_help()
-    sys.exit(1)
+if __name__ == "__main__":
+    if len(sys.argv) <= 1:
+        parser.print_help()
+        sys.exit(1)
 
-args = parser.parse_args()
-bcgraph = BitcoinGraph(
-    blockchain={'host': 'localhost', 'port': 8332,
-                'rpc_user': args.user, 'rpc_pass': args.password,
-                'method': 'REST'})
-bcgraph.export(
-    args.startheight,
-    args.endheight,
-    args.output_path,
-    args.plain_header,
-    not args.no_separate_header,
-    progress,
-    not args.no_transaction_deduplication)
+    args = parser.parse_args()
+
+    ssh_tunnel = args.ssh
+    if ssh_tunnel:
+        ssh_tunnel = SSHTunnel.from_config_file(args.ssh)
+
+    bcgraph = BitcoinGraph(
+        blockchain={'host': args.host, 'port': args.port,
+                    'rpc_user': args.user, 'rpc_pass': args.password,
+                    'method': 'REST', 'cache_path': args.cache, 'ssh_tunnel': ssh_tunnel})
+    bcgraph.export(
+        args.startheight,
+        args.endheight,
+        args.output_path,
+        args.plain_header,
+        not args.no_separate_header,
+        progress,
+        not args.no_transaction_deduplication)

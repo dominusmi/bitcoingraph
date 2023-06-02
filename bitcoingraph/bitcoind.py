@@ -3,12 +3,18 @@ Bitcoin Core JSON-RPC interface.
 
 """
 import logging
+import os
+from typing import Optional
+
+try:
+    import paramiko
+except ImportError:
+    pass
 
 import requests
 import json
 
 import time
-
 
 __author__ = 'Bernhard Haslhofer (bernhard.haslhofer@ait.ac.at)'
 __copyright__ = 'Copyright 2015, Bernhard Haslhofer'
@@ -20,6 +26,22 @@ class BitcoindException(Exception):
     Exception raised when accessing Bitcoin Core via JSON-RPCS.
     """
     pass
+
+
+class SSHTunnel:
+    def __init__(self, client: paramiko.SSHClient):
+        self.client = client
+
+    @classmethod
+    def from_config_file(cls, path):
+        with open(path, 'r') as file:
+            vars = {"port": 22, **json.load(file)}
+
+        print("Using SSH tunnel with at {}:{}".format(vars["hostname"], vars["port"]))
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(**vars)
+        return cls(ssh_client)
 
 
 class JSONRPCInterface:
@@ -100,15 +122,24 @@ class JSONRPCInterface:
 
 class RESTInterface:
 
-    def __init__(self, url):
+    def __init__(self, url, ssh_tunnel: Optional[SSHTunnel] = None):
         self._session = requests.Session()
         self._url = url
+        self._ssh_tunnel = ssh_tunnel
 
     def get_block(self, hash):
-        r = self._session.get(self._url + 'block/{}.json'.format(hash))
-        if r.status_code != 200:
-            raise Exception('REST request was not successful')
-        return r.json()
+        if self._ssh_tunnel:
+            curl_command = """curl http://127.0.0.1:8332/rest/block/{}.json""".format(hash)
+            stdin, stdout, stderr = self._ssh_tunnel.client.exec_command(curl_command)
+            output = stdout.read().decode('utf-8')
+            json_output = json.loads(output)
+            return json_output
+        else:
+            r = self._session.get(self._url + 'block/{}.json'.format(hash), timeout=120)
+            if r.status_code != 200:
+                raise Exception('REST request was not successful')
+            return r.json()
+
 
 
 class BitcoinProxy:
@@ -119,7 +150,7 @@ class BitcoinProxy:
     `here <https://en.bitcoin.it/wiki/Original_Bitcoin_client/API_Calls_list>`_
     """
 
-    def __init__(self, host, port, rpc_user=None, rpc_pass=None, method='RPC'):
+    def __init__(self, host, port, rpc_user=None, rpc_pass=None, method='RPC', ssh_tunnel=None, cache_path=None):
         """
         Creates a Bitcoin JSON RPC Service object.
 
@@ -128,13 +159,16 @@ class BitcoinProxy:
         :rtype: BitcoinProxy
         """
         self.method = method
-        rest_url = 'http://{}:{}/rest/'.format(host, port)
         rpc_url = 'http://{}:{}@{}:{}/'.format(rpc_user, rpc_pass, host, port)
-        print(f'REST URL is: {rest_url}')
         print(f'RPC URL is: {rpc_url}')
         self._jsonrpc_proxy = JSONRPCInterface(rpc_url)
+
         if method == 'REST':
-            self._rest_proxy = RESTInterface(rest_url)
+            rest_url = 'http://{}:{}/rest/'.format(host, port)
+            print(f'REST URL is: {rest_url}')
+            self._rest_proxy = RESTInterface(rest_url, ssh_tunnel=ssh_tunnel)
+
+        self._cache_path = cache_path
 
     def getblock(self, block_hash):
         """
@@ -145,7 +179,18 @@ class BitcoinProxy:
         :rtype: str
         """
         if self.method == 'REST':
-            r = self._rest_proxy.get_block(block_hash)
+            if self._cache_path:
+                path = "{}/{}.json".format(self._cache_path, block_hash)
+                if os.path.exists(path):
+                    with open(path, 'r') as f:
+                        r = json.load(f)
+                else:
+                    r = self._rest_proxy.get_block(block_hash)
+                    with open(path, "w+") as f:
+                        json.dump(r, f)
+            else:
+                r = self._rest_proxy.get_block(block_hash)
+
         else:
             r = self._jsonrpc_proxy.call('getblock', block_hash)
         return r

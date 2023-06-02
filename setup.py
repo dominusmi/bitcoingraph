@@ -54,7 +54,6 @@ setup(
              'scripts/bcgraph-synchronize'],
     platforms='any',
     install_requires=['requests>=2.5.0'],
-
     classifiers=[
          'Development Status :: 4 - Beta',
          'Environment :: Console',
@@ -71,6 +70,7 @@ setup(
     cmdclass={'test': PyTest},
     extras_require={
         'testing': ['pytest'],
+        'ssh': ['paramiko']
     },
 
     # Legal info
