@@ -220,8 +220,9 @@ class Output:
         self.index = index
         self.value = json_data['value']
         self.type = json_data['scriptPubKey']['type']
-        if 'addresses' in json_data['scriptPubKey']:
-            self.addresses = json_data['scriptPubKey']['addresses']
+        # See https://github.com/btcsuite/btcd/issues/1874
+        if 'address' in json_data['scriptPubKey']:
+            self.addresses = [json_data['scriptPubKey']['address']]
         # Check if scriptPubKey.type indicates P2PK transaction, we then extract the pubkey as address from asm object
         # which is in the format of '<pubkey> OP_CHECKSIG'
         elif json_data['scriptPubKey']['type'] == 'pubkey':
