@@ -11,5 +11,6 @@ parser.add_argument('--sort-input', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
 
-args = parser.parse_args()
-bitcoingraph.compute_entities(args.input_path, args.sort_input)
+if __name__ == "__main__":
+    args = parser.parse_args()
+    bitcoingraph.compute_entities(args.input_path, args.sort_input)
