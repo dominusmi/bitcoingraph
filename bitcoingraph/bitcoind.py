@@ -2,6 +2,7 @@
 Bitcoin Core JSON-RPC interface.
 
 """
+import gzip
 import logging
 import os
 from typing import Optional
@@ -170,6 +171,21 @@ class BitcoinProxy:
 
         self._cache_path = cache_path
 
+    def _block_cache_path(self, block_hash: str) -> str:
+        return "{}/{}.json.gz".format(self._cache_path, block_hash)
+
+    def _get_from_cache(self, block_hash: str):
+        path = self._block_cache_path(block_hash)
+        if os.path.exists(path):
+            with gzip.open(path, 'rb') as f:
+                return json.load(f)
+
+        return None
+
+    def _write_to_cache(self, r, block_hash: str):
+        with gzip.open(self._block_cache_path(block_hash), "wt+") as f:
+            json.dump(r, f)
+
     def getblock(self, block_hash):
         """
         Returns information about the block with the given hash.
@@ -180,14 +196,17 @@ class BitcoinProxy:
         """
         if self.method == 'REST':
             if self._cache_path:
-                path = "{}/{}.json".format(self._cache_path, block_hash)
-                if os.path.exists(path):
-                    with open(path, 'r') as f:
-                        r = json.load(f)
-                else:
+                r = None
+
+                try:
+                    r = self._get_from_cache(block_hash)
+                except Exception as e:
+                    print(f"Failed to parse json {self._block_cache_path(block_hash)}, defaulting to REST")
+
+                if r is None:
                     r = self._rest_proxy.get_block(block_hash)
-                    with open(path, "w+") as f:
-                        json.dump(r, f)
+                    self._write_to_cache(r, block_hash)
+
             else:
                 r = self._rest_proxy.get_block(block_hash)
 
