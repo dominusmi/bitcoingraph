@@ -30,7 +30,7 @@ class BitcoindException(Exception):
 
 
 class SSHTunnel:
-    def __init__(self, client: paramiko.SSHClient):
+    def __init__(self, client: 'paramiko.SSHClient'):
         self.client = client
 
     @classmethod
