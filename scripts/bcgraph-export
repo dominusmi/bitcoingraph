@@ -38,6 +38,8 @@ parser.add_argument("--ssh",
 parser.add_argument("--cache", type=str,
                     help="If provided, should be a string to an existing directory in "
                          "which to save/load .json block files. Only used with REST method")
+parser.add_argument("--timeout", type=int,
+                    help="Bitcoin Core request timeout")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
@@ -53,7 +55,8 @@ if __name__ == "__main__":
     bcgraph = BitcoinGraph(
         blockchain={'host': args.host, 'port': args.port,
                     'rpc_user': args.user, 'rpc_pass': args.password,
-                    'method': 'REST', 'cache_path': args.cache, 'ssh_tunnel': ssh_tunnel})
+                    'method': 'REST', 'cache_path': args.cache, 'ssh_tunnel': ssh_tunnel,
+                    'timeout': args.timeout})
     bcgraph.export(
         args.startheight,
         args.endheight,

@@ -123,10 +123,11 @@ class JSONRPCInterface:
 
 class RESTInterface:
 
-    def __init__(self, url, ssh_tunnel: Optional[SSHTunnel] = None):
+    def __init__(self, url, ssh_tunnel: Optional[SSHTunnel] = None, timeout: Optional[int] = None):
         self._session = requests.Session()
         self._url = url
         self._ssh_tunnel = ssh_tunnel
+        self._timeout = timeout
 
     def get_block(self, hash):
         if self._ssh_tunnel:
@@ -136,11 +137,10 @@ class RESTInterface:
             json_output = json.loads(output)
             return json_output
         else:
-            r = self._session.get(self._url + 'block/{}.json'.format(hash), timeout=120)
+            r = self._session.get(self._url + 'block/{}.json'.format(hash))
             if r.status_code != 200:
                 raise Exception('REST request was not successful')
             return r.json()
-
 
 
 class BitcoinProxy:
@@ -151,7 +151,8 @@ class BitcoinProxy:
     `here <https://en.bitcoin.it/wiki/Original_Bitcoin_client/API_Calls_list>`_
     """
 
-    def __init__(self, host, port, rpc_user=None, rpc_pass=None, method='RPC', ssh_tunnel=None, cache_path=None):
+    def __init__(self, host, port, rpc_user=None, rpc_pass=None, method='RPC', ssh_tunnel=None, cache_path=None,
+                 timeout=None):
         """
         Creates a Bitcoin JSON RPC Service object.
 
@@ -167,7 +168,7 @@ class BitcoinProxy:
         if method == 'REST':
             rest_url = 'http://{}:{}/rest/'.format(host, port)
             print(f'REST URL is: {rest_url}')
-            self._rest_proxy = RESTInterface(rest_url, ssh_tunnel=ssh_tunnel)
+            self._rest_proxy = RESTInterface(rest_url, ssh_tunnel=ssh_tunnel, timeout=timeout)
 
         self._cache_path = cache_path
 
