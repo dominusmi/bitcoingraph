@@ -142,6 +142,7 @@ class BitcoinGraph:
                     if percentage > last_percentage:
                         progress(processed_blocks / number_of_blocks)
         if separate_header:
+            print("\nWriting blocks finished. Running sorts.")
             sort(output_path, 'addresses.csv', '-u')
             if deduplicate_transactions:
                 for base_name in ['transactions', 'rel_tx_output',
