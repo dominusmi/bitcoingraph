@@ -7,10 +7,13 @@ parser = argparse.ArgumentParser(
     description='Compute entities from exported block chain data')
 parser.add_argument('-i', '--input_path', required=True,
                     help='Input path')
-parser.add_argument('--sort-input', action='store_true',
+parser.add_argument('--skip-sort-input', action='store_true',
+                    help='This should only be set if the process crashed after reaching the log "Compute entities"')
+parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    bitcoingraph.compute_entities(args.input_path, args.sort_input)
+    sort_input = not args.skip_sort_input
+    bitcoingraph.compute_entities(args.input_path, sort_input, args.sort_output)

@@ -167,13 +167,21 @@ class BitcoinGraph:
                 self.graph_db.add_block(block)
 
 
-def compute_entities(input_path, sort_input=False):
-    """Read exported CSV files containing blockchain information and
+def compute_entities(input_path, sort_input=True, sort_output_address=False):
+    """
+    Read exported CSV files containing blockchain information and
     export entities into CSV files.
     """
-    if sort_input:
+    if sort_output_address:
+        print("Sorting rel_output_address.csv")
         sort(input_path, 'rel_output_address.csv')
-    sort(input_path, 'rel_input.csv', '-k 2 -t ,')
-    entities.calculate_input_addresses(input_path)
-    sort(input_path, 'input_addresses.csv')
+
+    if sort_input:
+        print("Sorting rel_input.csv")
+        sort(input_path, 'rel_input.csv', '-k 2 -t ,')
+        entities.calculate_input_addresses(input_path)
+        print("Sorting input_addresses.csv")
+        sort(input_path, 'input_addresses.csv')
+
+    print("Computing entities")
     entities.compute_entities(input_path)
