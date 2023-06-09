@@ -33,6 +33,10 @@ if __name__ == "__main__":
     path = pathlib.Path(args.input_path)
     hashes = set([])
 
+    with open(path.joinpath("rel_address_address_header.csv"), "w+") as f:
+        f.write("pk:START_ID(Address),address:END_ID(Address)\n")
+
+    print("Starting..")
     line_count = 0
     count_hashes = 0
     count_pks = 0
@@ -53,7 +57,16 @@ if __name__ == "__main__":
             for line_number, line in enumerate(f.readlines()):
                 line = line.strip()
                 if line.startswith("pk_"):
-                    key = Key(line[3:])
+                    if line.endswith("CHECKSIG"):
+                        pk = line[3:-12]
+                    else:
+                        pk = line[3:]
+
+                    try:
+                        key = Key(pk)
+                    except Exception as e:
+                        print(f"Failed to parse key, skipping\n{pk}\n{e}")
+                        continue
 
                     p2pkh = get_p2pkh(key)
                     if p2pkh in hashes:
@@ -70,7 +83,6 @@ if __name__ == "__main__":
                     progress(line_number / line_count)
                     output.write("\n".join(batch_write) + "\n")
                     batch_write = []
-
 
             if batch_write:
                 output.write("\n".join(batch_write) + "\n")
