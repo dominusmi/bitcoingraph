@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import datetime
 import pathlib
 import sys
 
@@ -30,21 +31,25 @@ def progress(p: float):
 
 
 def line_reader(file, chunk_size):
-    remainder = b""  # Store the remaining data from the previous chunk
+    remainder = ""  # Store the remaining data from the previous chunk
     while True:
+        start = datetime.datetime.now()
+        print(f"Reading batch of {chunk_size} bytes")
         chunk = file.read(chunk_size)
         if not chunk:
+            print(f"EOF")
             break
-
+        end = datetime.datetime.now()
+        print(f"Batch read in {(end-start).seconds} seconds")
         data = remainder + chunk
-        lines = data.split(b"\n")
+        lines = data.split("\n")
         # Process all complete lines except the last one
         for line in lines[:-1]:
-            yield line.decode()
+            yield line.strip()
         remainder = lines[-1]
 
     if remainder:
-        yield remainder.decode()
+        yield remainder
 
 
 if __name__ == "__main__":
@@ -57,54 +62,46 @@ if __name__ == "__main__":
         f.write("pk:START_ID(Address),address:END_ID(Address)\n")
 
     print("Starting..")
-    line_count = 0
-    count_hashes = 0
-    count_pks = 0
     chunk_size = args.read_size
-    with open(path.joinpath("addresses.csv"), 'rb') as file:
-        for line in line_reader(file, chunk_size):
-            line = line.strip()
-            line_count += 1
+    started_processing_pk = False
+    with open(path.joinpath("addresses.csv"), "r") as f:
+        # instead of writing every relationship one at a time, we write them in batches
+        batch_write = []
+        for line_number, line in enumerate(line_reader(f, chunk_size)):
             if line.startswith("pk_"):
-                count_pks += 1
-
-    count_hashes = line_count - count_pks
-    print("Total PKs: {}\nTotal hashes: {}".format(count_pks, count_hashes))
-
-    with open(path.joinpath("rel_address_address.csv"), "w+") as output:
-        with open(path.joinpath("addresses.csv"), "rb") as f:
-            # instead of writing every relationship one at a time, we write them in batches
-            batch_write = []
-
-            for line_number, line in enumerate(line_reader(f, chunk_size)):
-                line = line.strip()
-                if line.startswith("pk_"):
-                    if line.endswith("CHECKSIG"):
-                        pk = line[3:-12]
-                    else:
-                        pk = line[3:]
-
-                    try:
-                        key = Key(pk)
-                    except Exception as e:
-                        print(f"Failed to parse key, skipping\n{pk}\n{e}")
-                        continue
-
-                    p2pkh = get_p2pkh(key)
-                    if p2pkh in hashes:
-                        batch_write.append(f"{line},{p2pkh}")
-                        continue
-
-                    p2wpkh = get_p2wpkh(key)
-                    if p2wpkh in hashes:
-                        batch_write.append(f"{line},{p2wpkh}")
+                if line.endswith("CHECKSIG"):
+                    pk = line[3:-12]
                 else:
-                    hashes.add(line)
+                    pk = line[3:]
 
-                if line_number and batch_write and line_number % batch_size == 0:
-                    progress(line_number / line_count)
+                if not started_processing_pk:
+                    started_processing_pk = True
+                    print("Started processing public keys")
+
+                try:
+                    key = Key(pk)
+                except Exception as e:
+                    print(f"Failed to parse key, skipping\n{pk}\n{e}")
+                    continue
+
+                p2pkh = get_p2pkh(key)
+                if p2pkh in hashes:
+                    batch_write.append(f"{line},{p2pkh}")
+                    continue
+
+                p2wpkh = get_p2wpkh(key)
+                if p2wpkh in hashes:
+                    batch_write.append(f"{line},{p2wpkh}")
+            else:
+                hashes.add(line)
+
+            if line_number and batch_write and line_number % batch_size == 0:
+                date = datetime.datetime.utcnow()
+                print(f'{date.strftime("%Y-%m-%d %H:%M:%S")} Processed {line_number} addresses')
+                with open(path.joinpath("rel_address_address.csv"), "a") as output:
                     output.write("\n".join(batch_write) + "\n")
-                    batch_write = []
+                batch_write = []
 
-            if batch_write:
+        if batch_write:
+            with open(path.joinpath("rel_address_address.csv"), "a") as output:
                 output.write("\n".join(batch_write) + "\n")
