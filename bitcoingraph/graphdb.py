@@ -1,3 +1,4 @@
+import neo4j
 
 from bitcoingraph.neo4j import Neo4jController
 from bitcoingraph.helper import to_time, to_json
@@ -12,7 +13,11 @@ class GraphController:
     rows_per_page_default = 20
 
     def __init__(self, host, port, user, password):
-        self.graph_db = Neo4jController(host, port, user, password)
+        self.driver = neo4j.GraphDatabase.driver(f"bolt://{host}:{port}",
+                                                 auth=(user, password),
+                                                 connection_timeout=3600)
+
+        self.graph_db = Neo4jController(self.driver)
 
     def get_address_info(self, address, date_from=None, date_to=None,
                          rows_per_page=rows_per_page_default):
@@ -79,9 +84,6 @@ class GraphController:
     def delete_identity(self, id):
         self.graph_db.identity_delete_query(id)
 
-    def get_path(self, address1, address2):
-        return Path(self.graph_db.path_query(address1, address2))
-
     def get_max_block_height(self):
         return self.graph_db.get_max_block_height()
 
@@ -100,8 +102,6 @@ class GraphController:
                     output_node_id = db_transaction.add_output(tx_node_id, output)
                     for address in output.addresses:
                         db_transaction.add_address(output_node_id, address)
-        print('create entities for block (node id: {})'.format(block_node_id))
-        self.graph_db.create_entities(block_node_id)
 
 
 class Address:

@@ -115,7 +115,7 @@ class BitcoinGraph:
 
     def get_path(self, start, end):
         """Return a path between addresses."""
-        return self.graph_db.get_path(start, end)
+        raise NotImplemented("This function was removed in new version")
 
     def get_received_bitcoins(self, address):
         """Return the total number of bitcoins received by this address."""
