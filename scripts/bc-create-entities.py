@@ -17,6 +17,8 @@ parser.add_argument('-u', '--user', required=True,
                     help='Neo4j username')
 parser.add_argument('-p', '--password', required=True,
                     help='Neo4j password')
+parser.add_argument('--protocol', default='bolt://',
+                    help="Protocol to use to connect to db. Default to bolt://")
 parser.add_argument('-b', '--batch-size', default=50,
                     help='Number of blocks to query at the same time')
 parser.add_argument('--start-height', default=0,
@@ -51,8 +53,8 @@ def fetch_outputs_thread(session: neo4j.Session, batch_size: int, start_height: 
         session.close()
 
 
-def main(host, port, user, password, batch_size, start_height, max_height):
-    driver = neo4j.GraphDatabase.driver(f"bolt://{host}:{port}",
+def main(host, port, user, password, batch_size, start_height, max_height, protocol):
+    driver = neo4j.GraphDatabase.driver(f"{protocol}{host}:{port}",
                                         auth=(user, password),
                                         connection_timeout=3600)
 
