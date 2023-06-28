@@ -88,12 +88,9 @@ class GraphController:
         return self.graph_db.get_max_block_height()
 
     def add_block(self, block):
-        print('add block', block.height)
         with self.graph_db.transaction() as db_transaction:
             block_node_id = db_transaction.add_block(block)
             for index, tx in enumerate(block.transactions):
-                print('add transaction {} of {} (txid: {})'.format(
-                    index + 1, len(block.transactions), tx.txid))
                 tx_node_id = db_transaction.add_transaction(block_node_id, tx)
                 if not tx.is_coinbase():
                     for input in tx.inputs:
