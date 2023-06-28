@@ -8,6 +8,8 @@ the Bitcoin block chain.
 
 import logging
 
+import tqdm
+
 from bitcoingraph.bitcoind import BitcoinProxy, BitcoindException
 from bitcoingraph.blockchain import Blockchain
 from bitcoingraph import entities
@@ -163,7 +165,7 @@ class BitcoinGraph:
             else:
                 end = min(start + max_blocks - 1, blockchain_end)
             print('add blocks', start, 'to', end)
-            for block in self.blockchain.get_blocks_in_range(start, end):
+            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
                 self.graph_db.add_block(block)
 
 
