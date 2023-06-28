@@ -53,7 +53,10 @@ setup(
              'scripts/bcgraph-compute-entities',
              'scripts/bcgraph-synchronize'],
     platforms='any',
-    install_requires=['requests>=2.5.0'],
+    install_requires=[
+        'requests>=2.5.0',
+        'tqdm~=4.65.0'
+    ],
     classifiers=[
          'Development Status :: 4 - Beta',
          'Environment :: Console',
