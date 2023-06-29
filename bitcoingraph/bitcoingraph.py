@@ -155,7 +155,11 @@ class BitcoinGraph:
         """Synchronise the graph database with the blockchain
         information from the bitcoin client.
         """
-        start = self.graph_db.get_max_block_height() + 1
+        max_block_height = self.graph_db.get_max_block_height()
+        if max_block_height is None:
+            start = 0
+        else:
+            start = self.graph_db.get_max_block_height() + 1
         blockchain_end = self.blockchain.get_max_block_height() - 2
         if start > blockchain_end:
             print('Already up-to-date.')
