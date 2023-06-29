@@ -36,7 +36,8 @@ def main():
     neo4j = {'host': args.neo4j_host, 'port': args.neo4j_port,
              'user': args.neo4j_user, 'pass': args.neo4j_password}
     bcgraph = BitcoinGraph(blockchain=blockchain, neo4j=neo4j)
-    bcgraph.synchronize(args.max_blocks)
+    for _ in bcgraph.synchronize(args.max_blocks):
+        continue
 
 
 if __name__ == "__main__":
