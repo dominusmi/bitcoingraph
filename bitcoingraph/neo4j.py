@@ -117,20 +117,20 @@ class Neo4jController:
     def entity_query(self, address):
         s = lb_join(
             'MATCH (a:Address {address: {address}})-[:BELONGS_TO]->(e)',
-            'RETURN {id: id(e)}')
+            'RETURN {id: elementId(e)}')
         return self.query(s, {'address': address})
 
     def get_number_of_addresses_for_entity(self, id):
         s = lb_join(
             'MATCH (e:Entity)',
-            'WHERE id(e) = $id',
+            'WHERE elementId(e) = $id',
             'RETURN size((e)<-[:BELONGS_TO]-())')
         return self.query(s, {'id': id}).single_result()
 
     def entity_address_query(self, id, limit):
         s = lb_join(
             'MATCH (e:Entity)<-[:BELONGS_TO]-(a)',
-            'WHERE id(e) = $id',
+            'WHERE elementId(e) = $id',
             'OPTIONAL MATCH (a)-[:HAS]->(i)',
             'WITH e, a, collect(i) as is',
             'ORDER BY length(is) desc',
@@ -141,7 +141,7 @@ class Neo4jController:
     def identity_query(self, address):
         s = lb_join(
             'MATCH (a:Address {address: {address}})-[:HAS]->(i)',
-            'RETURN collect({id: id(i), name: i.name, link: i.link, source: i.source})')
+            'RETURN collect({id: elementId(i), name: i.name, link: i.link, source: i.source})')
         return self.query(s, {'address': address})
 
     def reverse_identity_query(self, name):
@@ -159,7 +159,7 @@ class Neo4jController:
     def identity_delete_query(self, id):
         s = lb_join(
             'MATCH (i:Identity)',
-            'WHERE id(i) = $id',
+            'WHERE elementId(i) = $id',
             'DETACH DELETE i')
         return self.query(s, {'id': id})
 
@@ -178,7 +178,7 @@ class Neo4jController:
     def get_id_of_address_node(self, address):
         s = lb_join(
             'MATCH (a:Address {address: $address})',
-            'RETURN id(a)')
+            'RETURN elementId(a)')
         return self.query(s, {'address': address}).single_result()
 
     def get_max_block_height(self):
@@ -190,44 +190,60 @@ class Neo4jController:
     def add_block(self, block):
         s = lb_join(
             'CREATE (b:Block {hash: $hash, height: $height, timestamp: $timestamp})',
-            'RETURN id(b)')
+            'WITH b',
+            'OPTIONAL MATCH (bprev:Block {height: $height-1})',
+            'CALL { WITH b,bprev',
+            'WITH b, bprev WHERE bprev is not null',
+            'CREATE (b)-[:APPENDS]->(bprev)',
+            '}'
+            'RETURN elementId(b) as id')
         p = {'hash': block.hash, 'height': block.height, 'timestamp': block.timestamp}
         return self.query(s, p).single_result()
 
     def add_transaction(self, block_node_id, tx):
         s = lb_join(
-            'MATCH (b) WHERE id(b) = $id',
+            'MATCH (b) WHERE elementId(b) = $id',
             'CREATE (b)-[:CONTAINS]->(t:Transaction {txid: $txid, coinbase: $coinbase})',
-            'RETURN id(t)')
-        p = {'id': block_node_id, 'txid': tx.txid, 'coinbase': tx.is_coinbase()}
+            'RETURN elementId(t) as id')
+        p = {'id': block_node_id['id'], 'txid': tx.txid, 'coinbase': tx.is_coinbase()}
         return self.query(s, p).single_result()
 
     def add_input(self, tx_node_id, output_reference):
         s = lb_join(
             'MATCH (o:Output {txid_n: $txid_n}), (t)',
-            'WHERE id(t) = $id',
+            'WHERE elementId(t) = $id',
             'CREATE (o)-[:INPUT]->(t)')
         p = {'txid_n': '{}_{}'.format(output_reference['txid'], output_reference['vout']),
-             'id': tx_node_id}
+             'id': tx_node_id['id']}
         return self.query(s, p).single_result()
 
     def add_output(self, tx_node_id, output):
         s = lb_join(
-            'MATCH (t) WHERE id(t) = $id',
+            'MATCH (t) WHERE elementId(t) = $id',
             'CREATE (t)-[:OUTPUT]->'
             '(o:Output {txid_n: $txid_n, n: $n, value: $value, type: $type})',
-            'RETURN id(o)')
-        p = {'id': tx_node_id, 'txid_n': '{}_{}'.format(output.transaction.txid, output.index),
+            'RETURN elementId(o) as id')
+        p = {'id': tx_node_id['id'], 'txid_n': '{}_{}'.format(output.transaction.txid, output.index),
              'n': output.index, 'value': output.value, 'type': output.type}
         return self.query(s, p).single_result()
 
     def add_address(self, output_node_id, address):
         s = lb_join(
-            'MATCH (o) WHERE id(o) = $id',
+            'MATCH (o) WHERE elementId(o) = $id',
             'MERGE (a:Address {address: $address})',
             'CREATE (o)-[:USES]->(a)',
-            'RETURN id(a)')
-        return self.query(s, {'id': output_node_id, 'address': address}).single_result()
+            'RETURN elementId(a) as id')
+        return self.query(s, {'id': output_node_id['id'], 'address': address}).single_result()
+
+    def add_addresses(self, output_node_id, addresses):
+        s = lb_join(
+            'MATCH (o) WHERE elementId(o) = $id',
+            'WITH o',
+            'UNWIND $addresses AS address',
+            'MERGE (a:Address {address: address})',
+            'CREATE (o)-[:USES]->(a)',
+            'RETURN elementId(a)')
+        return self.query(s, {'id': output_node_id['id'], 'addresses': addresses}).single_result()
 
     def query(self, statement, parameters=None):
         if parameters is None:
