@@ -55,7 +55,8 @@ setup(
     platforms='any',
     install_requires=[
         'requests>=2.5.0',
-        'tqdm~=4.65.0'
+        'tqdm~=4.65.0',
+        'neo4j>=4'
     ],
     classifiers=[
          'Development Status :: 4 - Beta',
