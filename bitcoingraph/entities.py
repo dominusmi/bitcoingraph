@@ -230,7 +230,6 @@ class EntityGrouping:
             self.entity_idx_counter += 1
             self.counter_entities += 1
 
-
     def save_entities(self, session: neo4j.Session):
         for entity_idx, addresses in self.entity_idx_to_addresses.items():
             if len(addresses) <= 1:
@@ -271,6 +270,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
     if max_height is None:
         max_height = session.run("MATCH (b:Block) RETURN max(b.height) as maxHeight").data()[0]["maxHeight"]
 
+    print(f"Starting run from {start_height} to max_height: {max_height}")
     # This is the thread that continuously queries for the next batch_size blocks, and returns the outputs + addresses
     thread = threading.Thread(target=_fetch_outputs_thread,
                               args=(session, batch_size, start_height, max_height, result_queue, stop_queue,))
