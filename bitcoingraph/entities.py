@@ -173,11 +173,13 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
 def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, start_height: int, max_height: int,
                           result_queue: queue.Queue, stop_queue: queue.Queue):
     idx = start_height
+    end_height = idx + batch_size
     try:
         while stop_queue.empty() and idx < max_height:
-            result = fetch_transactions_from_blocks(session, start_height, max_height)
+            result = fetch_transactions_from_blocks(session, start_height, end_height)
             result_queue.put(result)
             idx += batch_size
+            end_height += batch_size
 
     except Exception as e:
         print(f"Thread failed: {e}")
