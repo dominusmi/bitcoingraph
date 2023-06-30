@@ -1,6 +1,7 @@
 import bisect
 import csv
 import os
+import pickle
 import queue
 import threading
 from time import sleep
@@ -234,7 +235,8 @@ class EntityGrouping:
 
     def save_entities(self, session: neo4j.Session, display_progress=False):
         if display_progress:
-            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses), desc="Saving entities")
+            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses),
+                                 desc="Saving entities")
         else:
             iterator = self.entity_idx_to_addresses.items()
         for entity_idx, addresses in iterator:
@@ -283,7 +285,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
     thread.start()
 
     entity_grouping = EntityGrouping()
-
+    current_block = 0
     try:
         loop_counter = 0
         progress_bar = tqdm.tqdm(total=max_height)
@@ -295,6 +297,8 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
                 for result in result_list:
                     addresses = result["addresses"]
                     entity_grouping.update_from_address_group(addresses)
+
+                current_block += batch_size
                 progress_bar.update(batch_size)
 
             except queue.Empty:
@@ -304,6 +308,11 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
             loop_counter += 1
             progress_bar.set_postfix({'Total entities': entity_grouping.counter_entities,
                                       'Counter joined': entity_grouping.counter_joined_entities})
+
+            if loop_counter % int(round(10000/batch_size)) == 0:
+                with open("./state_dump.pickle", "wb+") as f:
+                    print("Dumping current state")
+                    pickle.dump({"iteration": current_block, "grouping": entity_grouping}, f)
 
     except KeyboardInterrupt:
         stop_queue.put("Time to stop")
