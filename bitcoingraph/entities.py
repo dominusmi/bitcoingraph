@@ -196,11 +196,11 @@ class EntityGrouping:
         self.counter_joined_entities = 0
 
     def update_from_address_group(self, addresses):
-        found_entities_idx = []
+        found_entities_idx = set([])
         for addr in addresses:
             entity_idx = self.address_to_entity_idx.get(addr, None)
             if entity_idx is not None:
-                found_entities_idx.append(entity_idx)
+                found_entities_idx.add(entity_idx)
 
         if found_entities_idx:
             # Here we need to join all the addresses from the different entities together
