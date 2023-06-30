@@ -232,8 +232,12 @@ class EntityGrouping:
             self.entity_idx_counter += 1
             self.counter_entities += 1
 
-    def save_entities(self, session: neo4j.Session):
-        for entity_idx, addresses in self.entity_idx_to_addresses.items():
+    def save_entities(self, session: neo4j.Session, display_progress=False):
+        if display_progress:
+            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses))
+        else:
+            iterator = self.entity_idx_to_addresses.items()
+        for entity_idx, addresses in iterator:
             if len(addresses) <= 1:
                 continue
             result = session.run("""
@@ -308,4 +312,4 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
                 sleep(2)
 
     with driver.session() as session:
-        entity_grouping.save_entities(session)
+        entity_grouping.save_entities(session, display_progress=True)
