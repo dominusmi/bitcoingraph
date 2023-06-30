@@ -234,7 +234,7 @@ class EntityGrouping:
 
     def save_entities(self, session: neo4j.Session, display_progress=False):
         if display_progress:
-            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses))
+            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses), desc="Saving entities")
         else:
             iterator = self.entity_idx_to_addresses.items()
         for entity_idx, addresses in iterator:
