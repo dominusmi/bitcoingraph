@@ -1,8 +1,4 @@
 import argparse
-import queue
-import threading
-import tqdm
-from time import sleep
 
 import neo4j
 
@@ -23,9 +19,9 @@ parser.add_argument('--protocol', default='bolt://',
                     help="Protocol to use to connect to db. Default to bolt://")
 parser.add_argument('-b', '--batch-size', default=50, type=int,
                     help='Number of blocks to query at the same time')
-parser.add_argument('--start-height', default=0,
+parser.add_argument('--start-height', default=0, type=int,
                     help='At which block to start')
-parser.add_argument('--max-height', default=None,
+parser.add_argument('--max-height', default=None, type=int,
                     help="At which block to end")
 
 
