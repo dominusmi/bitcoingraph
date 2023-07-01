@@ -121,6 +121,7 @@ def main(host, port, user, password, batch_size, start_height, max_height, proto
                         batch_rels = set([])
 
                 progress_bar.update(batch_size)
+                progress_bar.set_postfix({"awaiting rels": len(batch_rels)})
 
             except queue.Empty:
                 sleep(0.5)
