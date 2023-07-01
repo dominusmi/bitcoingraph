@@ -71,6 +71,7 @@ def thread_delete_entities(session: neo4j.Session, data_queue: queue.Queue, stop
                 if not stop_queue.empty():
                     is_empty_counter += 1
                     if is_empty_counter > 4:
+                        print("Stopping entities threas")
                         break
     finally:
         session.close()
@@ -116,17 +117,19 @@ def main(host, port, user, password, batch_size, start_height, max_height, proto
                 if new_rels:
                     batch_rels.update(new_rels)
                     if len(batch_rels) >= 2000:
-                        entities_queue.put(new_rels)
+                        entities_queue.put(batch_rels)
                         batch_rels = set([])
+
+                progress_bar.update(batch_size)
 
             except queue.Empty:
                 sleep(0.5)
 
             except KeyboardInterrupt:
                 pass
-            finally:
-                progress_bar.update(batch_size)
+
     finally:
+        entities_queue.put(batch_rels)
         stop_queue.put(True)
         thread.join()
         session.close()
