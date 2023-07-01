@@ -103,6 +103,7 @@ def main(host, port, user, password, batch_size, start_height, max_height, proto
     session = driver.session()
     progress_bar = tqdm.tqdm(total=max_height - start_height)
     seen_rels = set([])
+    batch_rels = set([])
     try:
         while True:
             try:
@@ -113,7 +114,10 @@ def main(host, port, user, password, batch_size, start_height, max_height, proto
                 new_rels = set(relationships).difference(seen_rels)
                 seen_rels.update(new_rels)
                 if new_rels:
-                    entities_queue.put(new_rels)
+                    batch_rels.update(new_rels)
+                    if len(batch_rels) >= 2000:
+                        entities_queue.put(new_rels)
+                        batch_rels = set([])
 
             except queue.Empty:
                 sleep(0.5)
