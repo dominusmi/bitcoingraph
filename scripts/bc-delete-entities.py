@@ -39,7 +39,7 @@ def thread_get_entities_per_block(session: neo4j.Session, max_height: int, batch
             WHERE b.height >= $lower AND b.height < $higher
             WITH b
             LIMIT $higher-$lower
-            MATCH (b)-[:CONTAINS]->()<-[:INPUT]-()-[:USES]->()-[e:BELONGS_TO]->()
+            MATCH (b)-[:CONTAINS]->()<-[:INPUT]-()-[:USES]->()-[:BELONGS_TO]->(e)
             RETURN collect(distinct elementId(e)) as relIds
             """, lower=idx, higher=idx + batch_size).data()[0]["relIds"]
             result_queue.put(result)
@@ -58,13 +58,13 @@ def thread_delete_entities(session: neo4j.Session, data_queue: queue.Queue, stop
     try:
         while True:
             try:
-                new_rels = data_queue.get_nowait()
-                print(f"Deleting {len(new_rels)}")
+                new_entities = data_queue.get_nowait()
+                print(f"Deleting {len(new_entities)}")
                 session.run("""
-                MATCH ()-[rel]->()
-                WHERE elementId(rel) in $relIds
-                DELETE rel
-                """, relIds=list(new_rels))
+                MATCH (e:Entities)
+                WHERE elementId(e) in $elmIds
+                DETACH DELETE e
+                """, elmIds=list(new_entities))
 
             except queue.Empty:
                 sleep(0.5)
