@@ -61,7 +61,7 @@ def thread_delete_entities(session: neo4j.Session, data_queue: queue.Queue, stop
                 new_entities = data_queue.get_nowait()
                 print(f"Deleting {len(new_entities)}")
                 session.run("""
-                MATCH (e:Entities)
+                MATCH (e)
                 WHERE elementId(e) in $elmIds
                 DETACH DELETE e
                 """, elmIds=list(new_entities))
