@@ -209,13 +209,16 @@ class EntityGrouping:
             # Here we need to join all the addresses from the different entities together
             min_entity_idx = min(found_entities_idx)
             entity_address_set = self.entity_idx_to_addresses[min_entity_idx]
+            moved_addresses = set(addresses)
             for entity_idx in found_entities_idx:
                 if entity_idx == min_entity_idx:
                     continue
-                entity_address_set.update(self.entity_idx_to_addresses[entity_idx])
-                self.entity_idx_to_addresses.pop(entity_idx)
 
-            for addr in addresses:
+                entity_addresses_to_merge = self.entity_idx_to_addresses.pop(entity_idx)
+                moved_addresses.update(entity_addresses_to_merge)
+                entity_address_set.update(entity_addresses_to_merge)
+
+            for addr in moved_addresses:
                 self.address_to_entity_idx[addr] = min_entity_idx
                 self.entity_idx_to_addresses[min_entity_idx].add(addr)
 
@@ -309,7 +312,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
             progress_bar.set_postfix({'Total entities': entity_grouping.counter_entities,
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
-            if loop_counter % int(round(10000/batch_size)) == 0:
+            if loop_counter % int(round(10000 / batch_size)) == 0:
                 with open("./state_dump.pickle", "wb+") as f:
                     print("Dumping current state")
                     pickle.dump({"iteration": current_block, "grouping": entity_grouping}, f)
