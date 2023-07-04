@@ -4,6 +4,8 @@ import os
 import pickle
 import queue
 import threading
+import uuid
+from pathlib import Path
 from time import sleep
 
 import neo4j
@@ -162,7 +164,6 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
         MATCH (b:Block)
         WHERE b.height >= $lower AND b.height < $higher
         WITH b
-        LIMIT $higher-$lower
         MATCH (b)-[:CONTAINS]->(t)
         WITH t
         MATCH (t)<-[:INPUT]-(o)-[:USES]->(a)
@@ -273,7 +274,7 @@ class EntityGrouping:
             result = result.consume()
 
 
-def add_entities(batch_size: int, start_height: int, max_height: int, driver: neo4j.Driver):
+def add_entities(batch_size: int, start_height: int, max_height: int, resume: str, driver: neo4j.Driver):
     session = driver.session()
     result_queue = queue.Queue()
     stop_queue = queue.Queue()
@@ -287,8 +288,19 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
                               args=(session, batch_size, start_height, max_height, result_queue, stop_queue,))
     thread.start()
 
-    entity_grouping = EntityGrouping()
-    current_block = 0
+    if resume is not None:
+        path = Path(resume).resolve()
+        with open(path, "rb+") as f:
+            data = pickle.load(f)
+            current_block = data["iteration"]
+            entity_grouping = data["grouping"]
+            print(f"Resuming from {path} at block {current_block}")
+    else:
+        entity_grouping = EntityGrouping()
+        current_block = 0
+
+    dump_path = f"./state_dump_{uuid.uuid4()}.pickle"
+    print(f"Dump file: {dump_path}")
     try:
         loop_counter = 0
         progress_bar = tqdm.tqdm(total=max_height)
@@ -313,7 +325,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, driver: ne
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
             if loop_counter % int(round(10000 / batch_size)) == 0:
-                with open("./state_dump.pickle", "wb+") as f:
+                with open(dump_path, "wb+") as f:
                     print("Dumping current state")
                     pickle.dump({"iteration": current_block, "grouping": entity_grouping}, f)
 
