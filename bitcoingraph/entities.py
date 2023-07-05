@@ -172,21 +172,22 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
     return result.data()
 
 
-def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, start_height: int, max_height: int,
+def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
                           result_queue: queue.Queue, stop_queue: queue.Queue):
     try:
         query = """
-            MATCH (b:Block)
-            WHERE b.height >= $lower and b.height < $higher
+            MATCH (t:Transaction)
+            WITH t
+            SKIP $skip
             CALL {
-                WITH b
-                MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+                WITH t
+                MATCH (t)<-[:INPUT]-(o)-[:USES]->(a)
                 WITH t, collect(distinct a.address) as addresses
                 RETURN addresses
-            } IN TRANSACTIONS
+            } IN TRANSACTIONS OF $batch_size ROWS
             RETURN addresses
             """
-        cursor = session.run(query, stream=True, lower=start_height, higher=max_height)
+        cursor = session.run(query, stream=True, skip=skip, batch_size=batch_size)
 
         while True:
             result = cursor.fetch(batch_size)
@@ -290,37 +291,37 @@ class EntityGrouping:
             result = result.consume()
 
 
-def add_entities(batch_size: int, start_height: int, max_height: int, resume: str, driver: neo4j.Driver):
+def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
     session = driver.session(fetch_size=batch_size)
     result_queue = queue.Queue()
     stop_queue = queue.Queue()
-
-    if max_height is None:
-        max_height = session.run("MATCH (b:Block) RETURN max(b.height) as maxHeight").data()[0]["maxHeight"]
-
-    print(f"Starting run from {start_height} to max_height: {max_height}")
-    # This is the thread that continuously queries for the next batch_size blocks, and returns the outputs + addresses
-
-    thread = threading.Thread(target=_fetch_outputs_thread,
-                              args=(session, batch_size, start_height, max_height, result_queue, stop_queue,))
-    thread.start()
 
     if resume is not None:
         path = Path(resume).resolve()
         with open(path, "rb+") as f:
             data = pickle.load(f)
-            current_block = data["iteration"]
+            current_transaction = data["iteration"]
             entity_grouping = data["grouping"]
-            print(f"Resuming from {path} at block {current_block}")
+            print(f"Resuming from {path} at transaction {current_transaction}")
     else:
         entity_grouping = EntityGrouping()
-        current_block = 0
+        current_transaction = 0
+
+    # 2.69 is the average number of inputs per transactions. The real query would actually be
+    # RETURN count(distinct t), however this takes a lot of time, hence the use of estimate
+    count_transactions = session.run("MATCH (t:Transaction)<-[:INPUT]-() RETURN count(t) as ct").data()[0]["ct"] / 2.69
+    count_transactions = int(round(count_transactions))
+
+    # This is the thread that continuously queries for the next batch_size transactions
+    thread = threading.Thread(target=_fetch_outputs_thread,
+                              args=(session, batch_size, current_transaction, result_queue, stop_queue,))
+    thread.start()
 
     dump_path = f"./state_dump_{uuid.uuid4()}.pickle"
     print(f"Dump file: {dump_path}")
     try:
         loop_counter = 0
-        progress_bar = tqdm.tqdm(desc="Transactions read")
+        progress_bar = tqdm.tqdm(desc="Transactions read", total=count_transactions-current_transaction)
         while True:
             try:
                 result_list = result_queue.get_nowait()
@@ -330,7 +331,9 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
                     addresses = result["addresses"]
                     entity_grouping.update_from_address_group(addresses)
 
-                progress_bar.update(len(result_list))
+                batch_transaction = len(result_list)
+                current_transaction += batch_transaction
+                progress_bar.update(batch_transaction)
 
             except queue.Empty:
                 print("-", end="")
@@ -343,7 +346,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
             if loop_counter % int(round(500000 / batch_size)) == 0:
                 with open(dump_path, "wb+") as f:
                     print("Dumping current state")
-                    pickle.dump({"iteration": current_block, "grouping": entity_grouping}, f)
+                    pickle.dump({"iteration": current_transaction, "grouping": entity_grouping}, f)
 
     except KeyboardInterrupt:
         stop_queue.put("Time to stop")

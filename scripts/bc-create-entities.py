@@ -21,20 +21,16 @@ parser.add_argument('--protocol', default='bolt://',
                     help="Protocol to use to connect to db. Default to bolt://")
 parser.add_argument('-b', '--batch-size', default=50, type=int,
                     help='Number of blocks to query at the same time')
-parser.add_argument('--start-height', default=0, type=int,
-                    help='At which block to start')
-parser.add_argument('--max-height', default=None, type=int,
-                    help="At which block to end")
 parser.add_argument('--resume', default=None, type=str,
                     help="If provided, resumes from given file")
 
 
-def main(host, port, user, password, batch_size, start_height, max_height, protocol, resume):
+def main(host, port, user, password, batch_size, protocol, resume):
     driver = neo4j.GraphDatabase.driver(f"{protocol}{host}:{port}",
                                         auth=(user, password),
                                         connection_timeout=3600)
 
-    add_entities(batch_size, start_height, max_height, resume, driver)
+    add_entities(batch_size, resume, driver)
     driver.close()
 
 
