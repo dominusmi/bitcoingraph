@@ -161,30 +161,44 @@ def calculate_input_addresses(input_path):
 
 def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, max_height: int):
     query = """
-        MATCH (b:Block)
+        MATCH (b:Block)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
         WHERE b.height >= $lower AND b.height < $higher
         WITH b
         MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
         WITH t, collect(distinct a.address) as addresses
         RETURN addresses
-        """
-    return session.run(query, stream=True, lower=start_height, higher=max_height).data()
+    """
+    result = session.run(query, stream=True, lower=start_height, higher=max_height)
+    return result.data()
 
 
 def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, start_height: int, max_height: int,
                           result_queue: queue.Queue, stop_queue: queue.Queue):
-    idx = start_height
-    end_height = idx + batch_size
     try:
-        while stop_queue.empty() and idx < max_height:
-            result = fetch_transactions_from_blocks(session, start_height, end_height)
-            result_queue.put(result)
-            idx += batch_size
-            end_height += batch_size
+        query = """
+            MATCH (b:Block)
+            WHERE b.height >= $lower and b.height < $higher
+            WITH b
+            MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+            WITH t, collect(distinct a.address) as addresses
+            RETURN addresses
+            """
+        cursor = session.run(query, stream=True, lower=start_height, higher=max_height)
+
+        while True:
+            result = cursor.fetch(batch_size)
+            if not result:
+                break
+            if not stop_queue.empty():
+                raise Exception("Received stop signal")
+            result_queue.put([{"addresses": g.get("addresses")} for g in result])
+
+        result_queue.put(None)
 
     except Exception as e:
         print(f"Thread failed: {e}")
     finally:
+        print("exiting")
         result_queue.put(None)
         session.close()
 
@@ -223,7 +237,7 @@ class EntityGrouping:
                 self.entity_idx_to_addresses[min_entity_idx].add(addr)
 
             self.counter_entities -= (len(found_entities_idx) - 1)
-            self.counter_joined_entities += len(found_entities_idx)
+            self.counter_joined_entities += len(found_entities_idx) - 1
 
         else:
             if len(addresses) <= 1:
@@ -274,7 +288,7 @@ class EntityGrouping:
 
 
 def add_entities(batch_size: int, start_height: int, max_height: int, resume: str, driver: neo4j.Driver):
-    session = driver.session()
+    session = driver.session(fetch_size=batch_size)
     result_queue = queue.Queue()
     stop_queue = queue.Queue()
 
@@ -283,6 +297,9 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
 
     print(f"Starting run from {start_height} to max_height: {max_height}")
     # This is the thread that continuously queries for the next batch_size blocks, and returns the outputs + addresses
+
+    count_transactions = session.run("MATCH (t:Transaction)<-[:INPUT]-() RETURN count(distinct t) as ct").data()[0]["ct"]
+
     thread = threading.Thread(target=_fetch_outputs_thread,
                               args=(session, batch_size, start_height, max_height, result_queue, stop_queue,))
     thread.start()
@@ -302,7 +319,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
     print(f"Dump file: {dump_path}")
     try:
         loop_counter = 0
-        progress_bar = tqdm.tqdm(total=max_height)
+        progress_bar = tqdm.tqdm(total=count_transactions)
         while True:
             try:
                 result_list = result_queue.get_nowait()
@@ -312,15 +329,14 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
                     addresses = result["addresses"]
                     entity_grouping.update_from_address_group(addresses)
 
-                current_block += batch_size
-                progress_bar.update(batch_size)
+                progress_bar.update(len(result_list))
 
             except queue.Empty:
                 print("-", end="")
                 sleep(1)
 
             loop_counter += 1
-            progress_bar.set_postfix({'Total entities': entity_grouping.counter_entities,
+            progress_bar.set_postfix({'Total entities': len(entity_grouping.entity_idx_to_addresses),
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
             if loop_counter % int(round(10000 / batch_size)) == 0:
