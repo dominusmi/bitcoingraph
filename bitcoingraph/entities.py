@@ -340,7 +340,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
             progress_bar.set_postfix({'Total entities': len(entity_grouping.entity_idx_to_addresses),
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
-            if loop_counter % int(round(10000 / batch_size)) == 0:
+            if loop_counter % int(round(500000 / batch_size)) == 0:
                 with open(dump_path, "wb+") as f:
                     print("Dumping current state")
                     pickle.dump({"iteration": current_block, "grouping": entity_grouping}, f)
