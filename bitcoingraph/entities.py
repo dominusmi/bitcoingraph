@@ -174,6 +174,7 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
 
 def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
                           result_queue: queue.Queue, stop_queue: queue.Queue):
+
     try:
         query = """
             MATCH (t:Transaction)
@@ -201,6 +202,7 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
 
     except Exception as e:
         print(f"Thread failed: {e}")
+        result_queue.put(-1)
     finally:
         print("exiting")
         result_queue.put(None)
@@ -327,6 +329,19 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
                 result_list = result_queue.get_nowait()
                 if result_list is None:
                     break
+
+                if result_list == -1:
+                    # This only happens if the thread failed due to an exception
+                    # In this case we try to start it again
+                    print("Thread died. Trying to restart it")
+                    expect_none = result_queue.get() # We must receive a None othw something went wrong and it's better to shutdown
+                    assert expect_none is None
+                    sleep(5)
+                    thread = threading.Thread(target=_fetch_outputs_thread,
+                                              args=(driver.session(fetch_size=batch_size), batch_size, current_transaction, result_queue, stop_queue,))
+                    thread.start()
+                    continue
+
                 for result in result_list:
                     addresses = result["addresses"]
                     entity_grouping.update_from_address_group(addresses)
