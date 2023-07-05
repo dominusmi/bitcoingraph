@@ -178,9 +178,12 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, start_height:
         query = """
             MATCH (b:Block)
             WHERE b.height >= $lower and b.height < $higher
-            WITH b
-            MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
-            WITH t, collect(distinct a.address) as addresses
+            CALL {
+                WITH b
+                MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+                WITH t, collect(distinct a.address) as addresses
+                RETURN addresses
+            } IN TRANSACTIONS
             RETURN addresses
             """
         cursor = session.run(query, stream=True, lower=start_height, higher=max_height)
