@@ -164,10 +164,9 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
         MATCH (b:Block)
         WHERE b.height >= $lower AND b.height < $higher
         WITH b
-        MATCH (b)-[:CONTAINS]->(t)
-        WITH t
-        MATCH (t)<-[:INPUT]-(o)-[:USES]->(a)
-        RETURN t.txid as txid, collect(distinct a.address) as addresses
+        MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+        WITH t, collect(distinct a.address) as addresses
+        RETURN addresses
         """
     return session.run(query, stream=True, lower=start_height, higher=max_height).data()
 
