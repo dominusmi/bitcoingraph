@@ -182,7 +182,7 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
             SKIP $skip
             CALL {
                 WITH t
-                MATCH (t)<-[:INPUT]-()-[:USES]->(a)
+                MATCH (t)<-[:INPUT]-()-[:USES]->(a:Address)
                 WITH t, collect(distinct a.address) as addresses
                 RETURN addresses
             } IN TRANSACTIONS
@@ -315,59 +315,58 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
     count_transactions = int(round(count_transactions))
 
     # This is the thread that continuously queries for the next batch_size transactions
-    thread = threading.Thread(target=_fetch_outputs_thread,
-                              args=(session, batch_size, current_transaction, result_queue, stop_queue,))
-    thread.start()
+    # thread = threading.Thread(target=_fetch_outputs_thread,
+    #                           args=(session, batch_size, current_transaction, result_queue, stop_queue,))
+    # thread.start()
 
     dump_path = f"./state_dump_{uuid.uuid4()}.pickle"
     print(f"Dump file: {dump_path}")
     try:
         loop_counter = 0
         progress_bar = tqdm.tqdm(desc="Transactions read", total=count_transactions-current_transaction)
+
+        query = """
+                    MATCH (t:Transaction)
+                    WITH t
+                    CALL {
+                        WITH t
+                        MATCH (t)<-[:INPUT]-()-[:USES]->(a)
+                        WITH t, collect(distinct a.address) as addresses
+                        RETURN addresses
+                    } IN TRANSACTIONS
+                    RETURN addresses
+                    """
+        cursor = session.run(query, stream=True, skip=current_transaction)
+
         while True:
-            try:
-                result_list = result_queue.get_nowait()
-                if result_list is None:
-                    break
+            result = cursor.fetch(batch_size)
+            if not result:
+                break
 
-                if result_list == -1:
-                    # This only happens if the thread failed due to an exception
-                    # In this case we try to start it again
-                    print("Thread died. Trying to restart it")
-                    expect_none = result_queue.get() # We must receive a None othw something went wrong and it's better to shutdown
-                    assert expect_none is None
-                    sleep(5)
-                    thread = threading.Thread(target=_fetch_outputs_thread,
-                                              args=(driver.session(), batch_size, current_transaction, result_queue, stop_queue,))
-                    thread.start()
-                    continue
+            result_list = [{"addresses": g.get("addresses")} for g in result]
+            # for result in result_list:
+            #     addresses = result["addresses"]
+            #     entity_grouping.update_from_address_group(addresses)
 
-                for result in result_list:
-                    addresses = result["addresses"]
-                    entity_grouping.update_from_address_group(addresses)
-
-                batch_transaction = len(result_list)
-                current_transaction += batch_transaction
-                progress_bar.update(batch_transaction)
-
-            except queue.Empty:
-                print("-", end="")
-                sleep(1)
+            batch_transaction = len(result_list)
+            current_transaction += batch_transaction
+            progress_bar.update(batch_transaction)
 
             loop_counter += 1
             progress_bar.set_postfix({'Total entities': len(entity_grouping.entity_idx_to_addresses),
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
-            if loop_counter % int(round(500000 / batch_size)) == 0:
+            if loop_counter % int(round(10000 / batch_size)) == 0:
                 with open(dump_path, "wb+") as f:
                     print("Dumping current state")
                     pickle.dump({"iteration": current_transaction, "grouping": entity_grouping}, f)
 
     except KeyboardInterrupt:
-        stop_queue.put("Time to stop")
-        for i in range(10):
-            if thread.is_alive():
-                sleep(2)
+        # stop_queue.put("Time to stop")
+        # for i in range(10):
+        #     if thread.is_alive():
+        #         sleep(2)
+        pass
 
     with driver.session() as session:
         entity_grouping.save_entities(session, display_progress=True)
