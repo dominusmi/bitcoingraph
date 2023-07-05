@@ -182,10 +182,10 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
             SKIP $skip
             CALL {
                 WITH t
-                MATCH (t)<-[:INPUT]-(o)-[:USES]->(a)
+                MATCH (t)<-[:INPUT]-()-[:USES]->(a)
                 WITH t, collect(distinct a.address) as addresses
                 RETURN addresses
-            } IN TRANSACTIONS OF $batch_size ROWS
+            } IN TRANSACTIONS
             RETURN addresses
             """
         cursor = session.run(query, stream=True, skip=skip, batch_size=batch_size)
