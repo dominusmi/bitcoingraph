@@ -298,8 +298,6 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
     print(f"Starting run from {start_height} to max_height: {max_height}")
     # This is the thread that continuously queries for the next batch_size blocks, and returns the outputs + addresses
 
-    count_transactions = session.run("MATCH (t:Transaction)<-[:INPUT]-() RETURN count(distinct t) as ct").data()[0]["ct"]
-
     thread = threading.Thread(target=_fetch_outputs_thread,
                               args=(session, batch_size, start_height, max_height, result_queue, stop_queue,))
     thread.start()
@@ -319,7 +317,7 @@ def add_entities(batch_size: int, start_height: int, max_height: int, resume: st
     print(f"Dump file: {dump_path}")
     try:
         loop_counter = 0
-        progress_bar = tqdm.tqdm(total=count_transactions)
+        progress_bar = tqdm.tqdm(desc="Transactions read")
         while True:
             try:
                 result_list = result_queue.get_nowait()
