@@ -188,7 +188,7 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
             } IN TRANSACTIONS
             RETURN addresses
             """
-        cursor = session.run(query, stream=True, skip=skip, batch_size=batch_size)
+        cursor = session.run(query, stream=True, skip=skip)
 
         while True:
             result = cursor.fetch(batch_size)
@@ -294,7 +294,7 @@ class EntityGrouping:
 
 
 def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
-    session = driver.session(fetch_size=batch_size)
+    session = driver.session()
     result_queue = queue.Queue()
     stop_queue = queue.Queue()
 
@@ -338,7 +338,7 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
                     assert expect_none is None
                     sleep(5)
                     thread = threading.Thread(target=_fetch_outputs_thread,
-                                              args=(driver.session(fetch_size=batch_size), batch_size, current_transaction, result_queue, stop_queue,))
+                                              args=(driver.session(), batch_size, current_transaction, result_queue, stop_queue,))
                     thread.start()
                     continue
 
