@@ -27,6 +27,10 @@ parser.add_argument('--skip-sort-input', action='store_true',
 parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
+parser.add_argument('--chunk-size', type=int, default=1024 * 100,
+                    help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
+parser.add_argument('--cached-batches', type=int, default=10000,
+                    help='Number of batches to keep in memory. Compute estimated memory as chunk-size x this')
 
 
 class Cache:
@@ -123,10 +127,9 @@ def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]]
         buffer = file.read(chunk_size)
 
 
-def process(input_path: Path):
+def process(input_path: Path, chunk_size: int, cached_batches: int):
     # chunk_size = 10*1024*1024 # 10MB
-    chunk_size = 1024 * 100
-    cache = Cache(n_cached_batches=100000)
+    cache = Cache(n_cached_batches=cached_batches)
 
     entity_grouping = EntityGrouping()
 
@@ -189,6 +192,6 @@ if __name__ == "__main__":
         sort(input_path, 'input_addresses.csv')
 
     start = time.time_ns()
-    process(Path(input_path).resolve())
+    process(Path(input_path).resolve(), args.chunk_size, args.batch_size)
     end = time.time_ns()
     print((end - start) / 1e9)
