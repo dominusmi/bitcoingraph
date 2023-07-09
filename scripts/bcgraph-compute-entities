@@ -1,7 +1,22 @@
 #!/usr/bin/env python
+import datetime
+import json
+import typing
 
+from numba import jit
 import argparse
-from bitcoingraph import bitcoingraph
+import csv
+import io
+import time
+from collections import OrderedDict
+from pathlib import Path
+from typing import List, Optional
+
+from tqdm import tqdm
+
+from bitcoingraph import bitcoingraph, entities
+from bitcoingraph.entities import EntityGrouping
+from bitcoingraph.helper import sort
 
 parser = argparse.ArgumentParser(
     description='Compute entities from exported block chain data')
@@ -13,7 +28,167 @@ parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
 
+
+class Cache:
+    def __init__(self, n_cached_batches: int):
+        self.cumsum_row = [0]
+        self.lookup_table: List[int] = [0] * 10000
+        self.lookup_keys: List[str] = [None] * 10000
+        self.lookup_cursor = 0
+
+        self.cached_batches: List[List[str]] = [[] for _ in range(n_cached_batches)]
+        self.cache_cursor = 0
+        self.cache_txid_start: OrderedDict = OrderedDict()
+        self.n_cached_batches = n_cached_batches
+
+    def get_lookup_index(self, txid_n: str) -> Optional[int]:
+        for i, key in enumerate(self.lookup_keys[:self.lookup_cursor]):
+            if txid_n < key:
+                return i - 1
+        return None
+
+    def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
+        cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
+        if cache_idx is not None:
+            return self.find_cached_address(cache_idx, txid_n)
+        return None
+
+    def load_from_file(self, lookup_index: int, f: typing.TextIO, chunk_size: int, txid_n: str):
+        tell = self.lookup_table[lookup_index]
+        f.seek(tell)
+        buffer = f.read(chunk_size)
+        buffer += f.readline()
+        batch, cursor, cumsum = process_chunk(buffer, chunk_size, tell)
+        batch_idx = self.load_batch(batch, cursor, cumsum)
+        return self.find_cached_address(batch_idx, txid_n)
+
+    def find_cached_address(self, cache_idx: int, txid_n: str) -> str:
+        for row in self.cached_batches[cache_idx]:
+            if row[0] == txid_n:
+                return row[1]
+        raise IndexError("Address not found even though should be there")
+
+    def load_batch(self, batch: List[List[str]], tell: int, cumsum: List[int]):
+        txid_n = batch[0][0]
+
+        # This means it's not already loaded
+        if tell in self.lookup_table and self.lookup_cursor > 0:
+            pass
+        else:
+            if (self.lookup_cursor + 1) % 10000 == 0:
+                self.lookup_table.extend([None] * 10000)
+                self.lookup_keys.extend([None] * 10000)
+
+            self.lookup_table[self.lookup_cursor] = tell
+            self.lookup_keys[self.lookup_cursor] = txid_n
+            self.lookup_cursor += 1
+
+        # latest batch are automatically loaded in cache
+        self.cache_txid_start[txid_n] = self.cache_cursor
+        if len(self.cache_txid_start) >= self.n_cached_batches:
+            # keep cache of max size self.n_cached_batches
+            self.cache_txid_start.popitem(last=False)
+
+        self.cached_batches[self.cache_cursor] = batch
+        batch_idx = self.cache_cursor
+        self.cache_cursor = (self.cache_cursor + 1) % self.n_cached_batches
+        return batch_idx
+
+
+def process_chunk(buffer: str, chunk_size: int, cursor: int):
+    max_elements = int(round(chunk_size / 100))
+    batch: List[List[str]] = [["", ""] for _ in range(max_elements)]
+    cumsum = [0] * max_elements
+
+    virtual_io = io.StringIO(buffer)
+    n = 0
+    for i, line in enumerate(virtual_io.readlines()):
+        cumsum[i] = cursor + virtual_io.tell()
+        row = line.split(",")
+        batch[i][0] = row[0]
+        batch[i][1] = row[1].strip()
+        n += 1
+
+    return batch[:n], cursor, cumsum[:n]
+
+
+def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]], int):  # 10MB
+    buffer = file.read(chunk_size)
+    cursor = 0
+    while buffer:
+        buffer += file.readline()  # finish the current line
+
+        yield process_chunk(buffer, chunk_size, cursor)
+        cursor = file.tell()
+        buffer = file.read(chunk_size)
+
+
+def process(input_path: Path):
+    # chunk_size = 10*1024*1024 # 10MB
+    chunk_size = 1024 * 100
+    cache = Cache(n_cached_batches=100000)
+
+    entity_grouping = EntityGrouping()
+
+    with open(input_path.joinpath('rel_input.csv'), 'r') as f_rel_input, open(
+            input_path.joinpath('rel_output_address.csv'), 'r') as f_rel_output_address:
+
+        output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
+
+        bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=66382)
+        for input_batch, _, _ in bar:
+            addresses = []
+            for row in input_batch:
+                txid_n = row[1]
+                idx = cache.get_lookup_index(txid_n)
+                if idx is not None:
+                    address = cache.try_get_cached(txid_n, idx)
+                    if address is None:
+                        with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
+                            address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
+                    addresses.append(address)
+                else:
+                    for batch, cursor, cumsum in output_address_iterator:
+                        batch_idx = cache.load_batch(batch, cursor, cumsum)
+                        if batch[0][0] <= txid_n <= batch[-1][0]:
+                            address = cache.find_cached_address(batch_idx, txid_n)
+                            addresses.append(address)
+                            break
+
+            if len(addresses) > 1:
+                entity_grouping.update_from_address_group(addresses)
+
+            bar.update(len(input_batch))
+            bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses)})
+            #
+            # for batch, cursor in :
+            #     for row in batch:
+            #         outputid, address = row
+            #         batch = cache.find(outputid)
+            #         if batch is not None:
+
+    print("Saving..")
+    with open(f"results_{datetime.datetime.utcnow()}.json", "w+") as f:
+        json.dump({key: list(value) for key, value in entity_grouping.entity_idx_to_addresses.items()}, f)
+
+
 if __name__ == "__main__":
     args = parser.parse_args()
     sort_input = not args.skip_sort_input
-    bitcoingraph.compute_entities(args.input_path, sort_input, args.sort_output)
+    input_path = args.input_path
+
+    if args.sort_output:
+        print("Sorting rel_output_address.csv")
+        sort(input_path, 'rel_output_address.csv')
+
+    if sort_input:
+        print("Sorting rel_input.csv")
+        sort(input_path, 'rel_input.csv', '-k 2 -t ,')
+        entities.calculate_input_addresses(input_path)
+        print("Sorting input_addresses.csv")
+        sort(input_path, 'input_addresses.csv')
+
+    start = time.time_ns()
+    process(Path(input_path).resolve())
+    end = time.time_ns()
+    print((end - start) / 1e9)
