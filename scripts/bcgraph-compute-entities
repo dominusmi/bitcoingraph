@@ -187,7 +187,11 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     for txid_n in outputs:
                         idx = cache.get_lookup_index(txid_n)
                         if idx is not None:
-                            address = cache.try_get_cached(txid_n, idx)
+                            try:
+                                address = cache.try_get_cached(txid_n, idx)
+                            except IndexError:
+                                print(f"Skipping {txid_n}")
+                                continue
                             if address is None:
                                 with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
                                     address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
