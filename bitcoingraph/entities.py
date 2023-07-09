@@ -3,10 +3,10 @@ import csv
 import os
 import pickle
 import queue
-import threading
 import uuid
 from pathlib import Path
 from time import sleep
+from typing import Dict, List, Set
 
 import neo4j
 import tqdm
@@ -177,14 +177,12 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
 
     try:
         query = """
-            MATCH (t:Transaction)
-            WITH t
+            MATCH (t:Transaction)<-[:INPUT]-(:Output)-[:USES]->(a:Address)
+            WITH t,a
             SKIP $skip
             CALL {
-                WITH t
-                MATCH (t)<-[:INPUT]-()-[:USES]->(a:Address)
-                WITH t, collect(distinct a.address) as addresses
-                RETURN addresses
+                WITH t,a
+                RETURN elementId(t) as elmId, collect(distinct elementId(a)) as addresses
             } IN TRANSACTIONS
             RETURN addresses
             """
@@ -212,14 +210,14 @@ def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
 class EntityGrouping:
     def __init__(self):
         self.entity_idx_counter = 0
-        self.entity_idx_to_addresses = {}  # in theory, could be a list, but slightly more complex logic for little gain
-        self.address_to_entity_idx = {}
+        self.entity_idx_to_addresses: Dict[int, Set[str]] = {}  # in theory, could be a list, but slightly more complex logic for little gain
+        self.address_to_entity_idx: Dict[str, int] = {}
         self.entity_idx_counter = 0
         self.counter_entities = 0
         self.counter_joined_entities = 0
 
-    def update_from_address_group(self, addresses):
-        found_entities_idx = set([])
+    def update_from_address_group(self, addresses: List[str]):
+        found_entities_idx: Set[int] = set([])
         for addr in addresses:
             entity_idx = self.address_to_entity_idx.get(addr, None)
             if entity_idx is not None:
@@ -227,7 +225,7 @@ class EntityGrouping:
 
         if found_entities_idx:
             # Here we need to join all the addresses from the different entities together
-            min_entity_idx = min(found_entities_idx)
+            min_entity_idx: int = min(found_entities_idx)
             entity_address_set = self.entity_idx_to_addresses[min_entity_idx]
             moved_addresses = set(addresses)
             for entity_idx in found_entities_idx:
@@ -326,15 +324,14 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
         progress_bar = tqdm.tqdm(desc="Transactions read", total=count_transactions-current_transaction)
 
         query = """
-                    MATCH (t:Transaction)
-                    WITH t
-                    CALL {
-                        WITH t
-                        MATCH (t)<-[:INPUT]-()-[:USES]->(a)
-                        WITH t, collect(distinct a.address) as addresses
-                        RETURN addresses
-                    } IN TRANSACTIONS
-                    RETURN addresses
+                MATCH (t:Transaction)<-[:INPUT]-(:Output)-[:USES]->(a:Address)
+                WITH t,a
+                SKIP $skip
+                CALL {
+                    WITH t,a
+                    RETURN elementId(t) as elmId, collect(distinct a.address) as addresses
+                } IN TRANSACTIONS
+                RETURN addresses
                     """
         cursor = session.run(query, stream=True, skip=current_transaction)
 
@@ -344,9 +341,9 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
                 break
 
             result_list = [{"addresses": g.get("addresses")} for g in result]
-            # for result in result_list:
-            #     addresses = result["addresses"]
-            #     entity_grouping.update_from_address_group(addresses)
+            for result in result_list:
+                addresses = result["addresses"]
+                entity_grouping.update_from_address_group(addresses)
 
             batch_transaction = len(result_list)
             current_transaction += batch_transaction
@@ -356,7 +353,7 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
             progress_bar.set_postfix({'Total entities': len(entity_grouping.entity_idx_to_addresses),
                                       'Counter joined': entity_grouping.counter_joined_entities})
 
-            if loop_counter % int(round(10000 / batch_size)) == 0:
+            if loop_counter % int(round(50000 / batch_size)) == 0:
                 with open(dump_path, "wb+") as f:
                     print("Dumping current state")
                     pickle.dump({"iteration": current_transaction, "grouping": entity_grouping}, f)
@@ -369,4 +366,5 @@ def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
         pass
 
     with driver.session() as session:
+        sleep(1)
         entity_grouping.save_entities(session, display_progress=True)
