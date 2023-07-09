@@ -32,7 +32,6 @@ parser.add_argument('--tot', type=int, default=None,
                     help='Total number of transactions, for progress bar')
 
 
-
 class Cache:
     def __init__(self, n_cached_batches: int):
         self.cumsum_row = [0]
@@ -52,9 +51,12 @@ class Cache:
         return None
 
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
-        cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
+        cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position % self.n_cached_batches])
         if cache_idx is not None:
-            return self.find_cached_address(cache_idx, txid_n)
+            try:
+                return self.find_cached_address(cache_idx, txid_n)
+            except IndexError:
+                pass
         return None
 
     def load_from_file(self, lookup_index: int, f: typing.TextIO, chunk_size: int, txid_n: str):
@@ -109,7 +111,7 @@ def process_chunk(buffer: str, chunk_size: int, cursor: int):
     for i, line in enumerate(virtual_io.readlines()):
         cumsum[i] = cursor + virtual_io.tell()
         row = line.split(",")
-        batch[i][0] = row[0]
+        batch[i][0] = row[0].strip()
         batch[i][1] = row[1].strip()
         n += 1
 
@@ -127,62 +129,97 @@ def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]]
         buffer = file.read(chunk_size)
 
 
+def iterate_grouped_outputs(batch):
+    """
+    The batch has structure [[tx1,o11], [tx1,o12], [tx2,o21], [tx3,o31]...]. This generator groups all
+    the outputs by the transaction, and will yield for example
+    [o11,o12],
+    [o21],
+    [o31]
+    """
+    current_tx = None
+    current_group = []
+
+    for item in batch:
+        tx, o = item
+        if tx != current_tx:
+            if current_group:
+                yield current_tx, current_group
+            current_tx = tx
+            current_group = []
+        current_group.append(o)
+
+    if current_group:
+        yield current_tx, current_group
+
+
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int]):
     # chunk_size = 10*1024*1024 # 10MB
     print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches)
 
     entity_grouping = EntityGrouping()
+    tx_with_group = []
 
-    print("Opening files")
-    with open(input_path.joinpath('rel_input.csv'), 'r') as f_rel_input, open(
-            input_path.joinpath('rel_output_address.csv'), 'r') as f_rel_output_address:
+    try:
+        with open(input_path.joinpath('rel_input.csv'), 'r') as f_rel_input, open(
+                input_path.joinpath('rel_output_address.csv'), 'r') as f_rel_output_address:
 
-        print("Preparing output iterator")
-        output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
+            output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
 
-        if tot is not None:
-            print(f"Total: {tot}")
-            bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=tot)
-        else:
-            bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
+            if tot is not None:
+                print(f"Total: {tot}")
+                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=tot)
+            else:
+                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
 
-        for input_batch, _, _ in bar:
-            addresses = []
-            bar.set_description(f"Loaded {len(input_batch)} transactions")
-            for row in input_batch:
-                txid_n = row[1]
-                idx = cache.get_lookup_index(txid_n)
-                if idx is not None:
-                    address = cache.try_get_cached(txid_n, idx)
-                    if address is None:
-                        with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
-                            address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
-                    addresses.append(address)
-                else:
-                    bar.set_description("Looking for output in iterator")
-                    for batch, cursor, cumsum in output_address_iterator:
-                        batch_idx = cache.load_batch(batch, cursor, cumsum)
-                        if batch[0][0] <= txid_n <= batch[-1][0]:
-                            address = cache.find_cached_address(batch_idx, txid_n)
-                            addresses.append(address)
-                            break
+            curr_tx = None
+            address_group = set([])
+            for input_batch, _, _ in bar:
+                for tx, outputs in iterate_grouped_outputs(input_batch):
+                    # We need to do this because a transaction group may be
+                    # split into multiple returned batches
+                    if curr_tx != tx:
+                        if len(address_group) > 1:
+                            entity_grouping.update_from_address_group(list(address_group))
+                            tx_with_group.append(curr_tx)
+                        address_group = set([])
+                        curr_tx = tx
 
-            if len(addresses) > 1:
-                entity_grouping.update_from_address_group(addresses)
+                    for txid_n in outputs:
+                        idx = cache.get_lookup_index(txid_n)
+                        if idx is not None:
+                            address = cache.try_get_cached(txid_n, idx)
+                            if address is None:
+                                with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
+                                    address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
+                            address_group.add(address)
+                        else:
+                            # try to get from latest cache
+                            address = cache.try_get_cached(txid_n, cache.cache_cursor - 1)
+                            if address is not None:
+                                address_group.add(address)
+                                continue
 
-            bar.update(len(input_batch))
-            bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses)})
-            #
-            # for batch, cursor in :
-            #     for row in batch:
-            #         outputid, address = row
-            #         batch = cache.find(outputid)
-            #         if batch is not None:
+                            for batch, cursor, cumsum in output_address_iterator:
 
-    print("Saving..")
-    with open(f"results_{datetime.datetime.utcnow()}.json", "w+") as f:
-        json.dump({key: list(value) for key, value in entity_grouping.entity_idx_to_addresses.items()}, f)
+                                batch_idx = cache.load_batch(batch, cursor, cumsum)
+                                if batch[0][0] <= txid_n <= batch[-1][0]:
+                                    address = cache.find_cached_address(batch_idx, txid_n)
+                                    address_group.add(address)
+                                    break
+
+                bar.update(len(input_batch))
+                bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses),
+                                 "joined": entity_grouping.counter_joined_entities})
+
+            if len(address_group) > 1:
+                entity_grouping.update_from_address_group(list(address_group))
+                tx_with_group.append(curr_tx)
+
+    finally:
+        with open(f"results_{datetime.datetime.utcnow()}.json", "w+") as f:
+            json.dump({key: list(value) for key, value in entity_grouping.entity_idx_to_addresses.items()}, f)
 
 
 if __name__ == "__main__":
