@@ -53,10 +53,7 @@ class Cache:
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
         cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
         if cache_idx is not None:
-            try:
-                return self.find_cached_address(cache_idx, txid_n)
-            except IndexError:
-                pass
+            return self.find_cached_address(cache_idx, txid_n)
         return None
 
     def load_from_file(self, lookup_index: int, f: typing.TextIO, chunk_size: int, txid_n: str):
@@ -199,7 +196,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             tried_lookup = None
                             if cache.lookup_cursor > 0:
                                 tried_lookup = cache.lookup_cursor-1
-                                address = cache.try_get_cached(txid_n, cache.lookup_cursor-1)
+                                address = cache.try_get_cached(txid_n, tried_lookup)
                                 if address is not None:
                                     address_group.add(address)
                                     continue
