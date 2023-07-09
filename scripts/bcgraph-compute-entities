@@ -1,20 +1,17 @@
 #!/usr/bin/env python
-import datetime
-import json
-import typing
-
-from numba import jit
 import argparse
-import csv
+import datetime
 import io
+import json
 import time
+import typing
 from collections import OrderedDict
 from pathlib import Path
 from typing import List, Optional
 
 from tqdm import tqdm
 
-from bitcoingraph import bitcoingraph, entities
+from bitcoingraph import entities
 from bitcoingraph.entities import EntityGrouping
 from bitcoingraph.helper import sort
 
