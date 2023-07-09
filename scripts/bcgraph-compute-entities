@@ -48,10 +48,6 @@ class Cache:
         for i, key in enumerate(self.lookup_keys[:self.lookup_cursor]):
             if txid_n < key:
                 return i - 1
-
-            if txid_n == key:
-                return i
-
         return None
 
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
@@ -204,6 +200,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                 try:
                                     address = cache.try_get_cached(txid_n, tried_lookup)
                                     address_group.add(address)
+                                    continue
                                 except IndexError:
                                     pass
 
@@ -214,15 +211,16 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     address_group.add(address)
                                     break
                                 if txid_n < batch[0][0]:
-
-                                    raise IndexError("\n".join([
-                                        "Cannot happen. Summary:",
-                                        f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
-                                        f"Looking for: {txid_n}",
-                                        f"Batch min:   {batch[0][0]}",
-                                        f"Tried to get {tried_lookup} key -> {cache.lookup_keys[tried_lookup]}",
-                                        f""
-                                    ]))
+                                    print(f"Skipping {txid_n}")
+                                    continue
+                                    # raise IndexError("\n".join([
+                                    #     "Cannot happen. Summary:",
+                                    #     f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
+                                    #     f"Looking for: {txid_n}",
+                                    #     f"Batch min:   {batch[0][0]}",
+                                    #     f"Tried to get {tried_lookup} key -> {cache.lookup_keys[tried_lookup]}",
+                                    #     f""
+                                    # ]))
 
                 bar.update(len(input_batch))
                 bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses),
