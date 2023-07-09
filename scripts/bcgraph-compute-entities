@@ -129,19 +129,25 @@ def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]]
 
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int]):
     # chunk_size = 10*1024*1024 # 10MB
+    print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches)
 
     entity_grouping = EntityGrouping()
 
+    print("Opening files")
     with open(input_path.joinpath('rel_input.csv'), 'r') as f_rel_input, open(
             input_path.joinpath('rel_output_address.csv'), 'r') as f_rel_output_address:
 
+        print("Preparing output iterator")
         output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
 
         if tot is not None:
+            print(f"Total: {tot}")
             bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=tot)
         else:
             bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
+
+        print("Starting..")
         for input_batch, _, _ in bar:
             addresses = []
             for row in input_batch:
