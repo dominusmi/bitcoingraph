@@ -56,12 +56,12 @@ class Cache:
             return self.find_cached_address(cache_idx, txid_n)
         return None
 
-    def load_from_file(self, lookup_index: int, f: typing.TextIO, chunk_size: int, txid_n: str):
+    def load_from_file(self, lookup_index: int, f: typing.BinaryIO, chunk_size: int, txid_n: str):
         tell = self.lookup_table[lookup_index]
         f.seek(tell)
         buffer = f.read(chunk_size)
         buffer += f.readline()
-        batch, cursor, cumsum = process_chunk(buffer, chunk_size, tell)
+        batch, cursor, cumsum = process_chunk(buffer.decode(), chunk_size, tell)
         batch_idx = self.load_batch(batch, cursor, cumsum)
         return self.find_cached_address(batch_idx, txid_n)
 
@@ -116,15 +116,28 @@ def process_chunk(buffer: str, chunk_size: int, cursor: int):
     return batch[:n], cursor, cumsum[:n]
 
 
-def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]], int):  # 10MB
-    buffer = file.read(chunk_size)
-    cursor = 0
-    while buffer:
-        buffer += file.readline()  # finish the current line
+def read_csv_in_chunks(file, chunk_size: int) -> (List[List[str]], int):  # 10MB
+    s = file.read(chunk_size * 100)
+    s += file.readline()
+    # batch_str = io.StringIO(s)
+    # batch = io.TextIOWrapper(batch_str, encoding='utf-8')
+    batch = io.BytesIO(s)
+    file_tell = 0
+    while True:
+        buffer = batch.read(chunk_size).decode()
+        cursor = file_tell
+        while buffer:
+            buffer += batch.readline().decode()  # finish the current line
 
-        yield process_chunk(buffer, chunk_size, cursor)
-        cursor = file.tell()
-        buffer = file.read(chunk_size)
+            yield process_chunk(buffer, chunk_size, cursor)
+            cursor = batch.tell() + file_tell
+            buffer = batch.read(chunk_size).decode()
+
+        file_tell = file.tell()
+        tmp = file.read(chunk_size * 100) + file.readline()
+        if len(tmp) == 0:
+            break
+        batch = io.BytesIO(tmp)
 
 
 def iterate_grouped_outputs(batch):
@@ -160,8 +173,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     tx_with_group = []
 
     try:
-        with open(input_path.joinpath('rel_input.csv'), 'r') as f_rel_input, open(
-                input_path.joinpath('rel_output_address.csv'), 'r') as f_rel_output_address:
+        with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
+                input_path.joinpath('rel_output_address.csv'), 'rb') as f_rel_output_address:
 
             output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
 
@@ -194,7 +207,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                 # print(f"Skipping {txid_n}")
                                 continue
                             if address is None:
-                                with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
+                                with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
                                     address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
                             address_group.add(address)
                         else:
