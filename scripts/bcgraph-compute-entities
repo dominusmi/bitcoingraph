@@ -208,6 +208,14 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     address = cache.find_cached_address(batch_idx, txid_n)
                                     address_group.add(address)
                                     break
+                                if txid_n < batch[0][0]:
+
+                                    raise IndexError([
+                                        "Cannot happen. Summary:",
+                                        f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
+                                        f"Looking for: {txid_n}",
+                                        f"Batch min:   {batch[0][0]}"
+                                    ])
 
                 bar.update(len(input_batch))
                 bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses),
