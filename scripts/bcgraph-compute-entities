@@ -28,6 +28,9 @@ parser.add_argument('--chunk-size', type=int, default=1024 * 100,
                     help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
 parser.add_argument('--cached-batches', type=int, default=10000,
                     help='Number of batches to keep in memory. Compute estimated memory as chunk-size x this')
+parser.add_argument('--tot', type=int, default=None,
+                    help='Total number of transactions, for progress bar')
+
 
 
 class Cache:
@@ -124,7 +127,7 @@ def read_csv_in_chunks(file: typing.TextIO, chunk_size: int) -> (List[List[str]]
         buffer = file.read(chunk_size)
 
 
-def process(input_path: Path, chunk_size: int, cached_batches: int):
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int]):
     # chunk_size = 10*1024*1024 # 10MB
     cache = Cache(n_cached_batches=cached_batches)
 
@@ -135,7 +138,10 @@ def process(input_path: Path, chunk_size: int, cached_batches: int):
 
         output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
 
-        bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=66382)
+        if tot is not None:
+            bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=tot)
+        else:
+            bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
         for input_batch, _, _ in bar:
             addresses = []
             for row in input_batch:
@@ -189,6 +195,6 @@ if __name__ == "__main__":
         sort(input_path, 'input_addresses.csv')
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot)
     end = time.time_ns()
     print((end - start) / 1e9)
