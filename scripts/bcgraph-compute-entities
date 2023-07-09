@@ -35,8 +35,8 @@ parser.add_argument('--tot', type=int, default=None,
 class Cache:
     def __init__(self, n_cached_batches: int):
         self.cumsum_row = [0]
-        self.lookup_table: List[int] = [0] * 10000
-        self.lookup_keys: List[str] = [None] * 10000
+        self.lookup_table: List[int] = [0] * max(n_cached_batches,10000)
+        self.lookup_keys: List[str] = [None] * max(n_cached_batches,10000)
         self.lookup_cursor = 0
 
         self.cached_batches: List[List[str]] = [[] for _ in range(n_cached_batches)]
