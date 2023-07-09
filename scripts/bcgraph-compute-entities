@@ -212,7 +212,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     break
                                 if txid_n < batch[0][0]:
                                     print(f"Skipping {txid_n}")
-                                    continue
+                                    break
                                     # raise IndexError("\n".join([
                                     #     "Cannot happen. Summary:",
                                     #     f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
