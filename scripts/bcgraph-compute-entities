@@ -35,8 +35,8 @@ parser.add_argument('--tot', type=int, default=None,
 class Cache:
     def __init__(self, n_cached_batches: int):
         self.cumsum_row = [0]
-        self.lookup_table: List[int] = [0] * max(n_cached_batches,10000)
-        self.lookup_keys: List[str] = [None] * max(n_cached_batches,10000)
+        self.lookup_table: List[int] = [0] * n_cached_batches
+        self.lookup_keys: List[str] = [None] * n_cached_batches
         self.lookup_cursor = 0
 
         self.cached_batches: List[List[str]] = [[] for _ in range(n_cached_batches)]
@@ -48,6 +48,10 @@ class Cache:
         for i, key in enumerate(self.lookup_keys[:self.lookup_cursor]):
             if txid_n < key:
                 return i - 1
+
+            if txid_n == key:
+                return i
+
         return None
 
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
@@ -69,6 +73,7 @@ class Cache:
         for row in self.cached_batches[cache_idx]:
             if row[0] == txid_n:
                 return row[1]
+
         raise IndexError("Address not found even though should be there")
 
     def load_batch(self, batch: List[List[str]], tell: int, cumsum: List[int]):
@@ -196,10 +201,11 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             tried_lookup = None
                             if cache.lookup_cursor > 0:
                                 tried_lookup = cache.lookup_cursor-1
-                                address = cache.try_get_cached(txid_n, tried_lookup)
-                                if address is not None:
+                                try:
+                                    address = cache.try_get_cached(txid_n, tried_lookup)
                                     address_group.add(address)
-                                    continue
+                                except IndexError:
+                                    pass
 
                             for batch, cursor, cumsum in output_address_iterator:
                                 batch_idx = cache.load_batch(batch, cursor, cumsum)
