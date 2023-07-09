@@ -81,9 +81,9 @@ class Cache:
         if tell in self.lookup_table and self.lookup_cursor > 0:
             pass
         else:
-            if (self.lookup_cursor + 1) % 10000 == 0:
-                self.lookup_table.extend([None] * 10000)
-                self.lookup_keys.extend([None] * 10000)
+            if (self.lookup_cursor + 1) % self.n_cached_batches == 0:
+                self.lookup_table.extend([None] * self.n_cached_batches)
+                self.lookup_keys.extend([None] * self.n_cached_batches)
 
             self.lookup_table[self.lookup_cursor] = tell
             self.lookup_keys[self.lookup_cursor] = txid_n
@@ -210,12 +210,14 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     break
                                 if txid_n < batch[0][0]:
 
-                                    raise IndexError([
+                                    raise IndexError("\n".join([
                                         "Cannot happen. Summary:",
                                         f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
                                         f"Looking for: {txid_n}",
-                                        f"Batch min:   {batch[0][0]}"
-                                    ])
+                                        f"Batch min:   {batch[0][0]}",
+                                        f"Tried to get {cache.lookup_cursor-1} key -> {cache.lookup_keys[cache.lookup_cursor-1]}",
+                                        f""
+                                    ]))
 
                 bar.update(len(input_batch))
                 bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses),
