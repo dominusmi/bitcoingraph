@@ -147,9 +147,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
         else:
             bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
 
-        print("Starting..")
         for input_batch, _, _ in bar:
             addresses = []
+            bar.set_description(f"Loaded {len(input_batch)} transactions")
             for row in input_batch:
                 txid_n = row[1]
                 idx = cache.get_lookup_index(txid_n)
@@ -160,6 +160,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
                     addresses.append(address)
                 else:
+                    bar.set_description("Looking for output in iterator")
                     for batch, cursor, cumsum in output_address_iterator:
                         batch_idx = cache.load_batch(batch, cursor, cumsum)
                         if batch[0][0] <= txid_n <= batch[-1][0]:
