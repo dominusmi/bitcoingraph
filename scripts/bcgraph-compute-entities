@@ -190,7 +190,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             try:
                                 address = cache.try_get_cached(txid_n, idx)
                             except IndexError:
-                                print(f"Skipping {txid_n}")
+                                # This can happen when the address is "Unknown" (mistake?)
+                                # print(f"Skipping {txid_n}")
                                 continue
                             if address is None:
                                 with open(input_path.joinpath('rel_output_address.csv'), 'r') as tmp:
@@ -215,7 +216,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     address_group.add(address)
                                     break
                                 if txid_n < batch[0][0]:
-                                    print(f"Skipping {txid_n}")
+                                    # This can happen when the address is "Unknown" (mistake?)
+                                    # print(f"Skipping {txid_n}")
                                     break
                                     # raise IndexError("\n".join([
                                     #     "Cannot happen. Summary:",
