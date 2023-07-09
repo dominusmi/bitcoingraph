@@ -189,6 +189,6 @@ if __name__ == "__main__":
         sort(input_path, 'input_addresses.csv')
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.batch_size)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches)
     end = time.time_ns()
     print((end - start) / 1e9)
