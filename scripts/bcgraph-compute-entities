@@ -57,10 +57,25 @@ class Cache:
         self.n_cached_batches = n_cached_batches
 
     def get_lookup_index(self, txid_n: str) -> Optional[int]:
-        for i, key in enumerate(self.lookup_keys[:self.lookup_cursor]):
-            if txid_n < key:
-                return i - 1
-        return None
+        left = 0
+        right = self.lookup_cursor - 1
+        result = -1  # Default result if no match is found
+
+        # if it's greater, we always return None. If it happens to be in the same batch
+        # as the current greatest batch, it will be caught in the main code
+        if txid_n > self.lookup_keys[right]:
+            return None
+
+        while left <= right:
+            mid = (left + right) // 2
+
+            if self.lookup_keys[mid] > txid_n:
+                result = mid
+                right = mid - 1
+            else:
+                left = mid + 1
+
+        return result - 1
 
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
         cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
