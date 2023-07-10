@@ -3,12 +3,15 @@ import argparse
 import datetime
 import io
 import json
+import pickle
 import time
 import typing
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import List, Optional
 
+from numba import jit
 from tqdm import tqdm
 
 from bitcoingraph import entities
@@ -26,6 +29,8 @@ parser.add_argument('--sort-output', action='store_true',
                          'the transaction deduplication was skipped on export.')
 parser.add_argument('--chunk-size', type=int, default=1024 * 100,
                     help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
+parser.add_argument('--read-size', type=int, default=102400,
+                    help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
 parser.add_argument('--cached-batches', type=int, default=10000,
                     help='Number of batches to keep in memory. Compute estimated memory as chunk-size x this')
 parser.add_argument('--tot', type=int, default=None,
@@ -33,15 +38,25 @@ parser.add_argument('--tot', type=int, default=None,
 
 
 class Cache:
+    cumsum_row: List[int]
+    lookup_table: List[int]
+    lookup_keys: List[str]
+    lookup_cursor: int
+
+    cached_batches: List[List[str]]
+    cache_cursor: int
+    cache_txid_start: OrderedDict[str, int]
+    n_cached_batches: int
+
     def __init__(self, n_cached_batches: int):
         self.cumsum_row = [0]
         self.lookup_table: List[int] = [0] * n_cached_batches
-        self.lookup_keys: List[str] = [None] * n_cached_batches
-        self.lookup_cursor = 0
+        self.lookup_keys: List[str] = [""] * n_cached_batches
+        self.lookup_cursor: int = 0
 
         self.cached_batches: List[List[str]] = [[] for _ in range(n_cached_batches)]
         self.cache_cursor = 0
-        self.cache_txid_start: OrderedDict = OrderedDict()
+        self.cache_txid_start: OrderedDict[str, int] = OrderedDict()
         self.n_cached_batches = n_cached_batches
 
     def get_lookup_index(self, txid_n: str) -> Optional[int]:
@@ -63,14 +78,16 @@ class Cache:
         buffer += f.readline()
         batch, cursor, cumsum = process_chunk(buffer.decode(), chunk_size, tell)
         batch_idx = self.load_batch(batch, cursor, cumsum)
-        return self.find_cached_address(batch_idx, txid_n)
+        address = self.find_cached_address(batch_idx, txid_n)
+        if address is None:
+            raise IndexError("load_from_file should always find the address")
 
-    def find_cached_address(self, cache_idx: int, txid_n: str) -> str:
+    def find_cached_address(self, cache_idx: int, txid_n: str) -> Optional[str]:
         for row in self.cached_batches[cache_idx]:
             if row[0] == txid_n:
                 return row[1]
 
-        raise IndexError("Address not found even though should be there")
+        return None
 
     def load_batch(self, batch: List[List[str]], tell: int, cumsum: List[int]):
         txid_n = batch[0][0]
@@ -80,8 +97,8 @@ class Cache:
             pass
         else:
             if (self.lookup_cursor + 1) % self.n_cached_batches == 0:
-                self.lookup_table.extend([None] * self.n_cached_batches)
-                self.lookup_keys.extend([None] * self.n_cached_batches)
+                self.lookup_table.extend([0] * self.n_cached_batches)
+                self.lookup_keys.extend([""] * self.n_cached_batches)
 
             self.lookup_table[self.lookup_cursor] = tell
             self.lookup_keys[self.lookup_cursor] = txid_n
@@ -116,8 +133,8 @@ def process_chunk(buffer: str, chunk_size: int, cursor: int):
     return batch[:n], cursor, cumsum[:n]
 
 
-def read_csv_in_chunks(file, chunk_size: int) -> (List[List[str]], int):  # 10MB
-    s = file.read(chunk_size * 100)
+def read_csv_in_chunks(file, chunk_size: int, read_size: int) -> (List[List[str]], int):  # 10MB
+    s = file.read(read_size)
     s += file.readline()
     # batch_str = io.StringIO(s)
     # batch = io.TextIOWrapper(batch_str, encoding='utf-8')
@@ -134,7 +151,7 @@ def read_csv_in_chunks(file, chunk_size: int) -> (List[List[str]], int):  # 10MB
             buffer = batch.read(chunk_size).decode()
 
         file_tell = file.tell()
-        tmp = file.read(chunk_size * 100) + file.readline()
+        tmp = file.read(read_size) + file.readline()
         if len(tmp) == 0:
             break
         batch = io.BytesIO(tmp)
@@ -164,7 +181,7 @@ def iterate_grouped_outputs(batch):
         yield current_tx, current_group
 
 
-def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int]):
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int):
     # chunk_size = 10*1024*1024 # 10MB
     print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches)
@@ -176,17 +193,17 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
         with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
                 input_path.joinpath('rel_output_address.csv'), 'rb') as f_rel_output_address:
 
-            output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size)
+            output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size, read_size)
 
             if tot is not None:
                 print(f"Total: {tot}")
-                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size), total=tot)
+                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size, read_size), total=tot)
             else:
-                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size))
+                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size, read_size))
 
             curr_tx = None
             address_group = set([])
-            for input_batch, _, _ in bar:
+            for iteration, (input_batch, _, _) in enumerate(bar):
                 for tx, outputs in iterate_grouped_outputs(input_batch):
                     # We need to do this because a transaction group may be
                     # split into multiple returned batches
@@ -212,15 +229,12 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             address_group.add(address)
                         else:
                             # try to get from latest cache
-                            tried_lookup = None
                             if cache.lookup_cursor > 0:
-                                tried_lookup = cache.lookup_cursor-1
-                                try:
-                                    address = cache.try_get_cached(txid_n, tried_lookup)
+                                tried_lookup = cache.lookup_cursor - 1
+                                address = cache.try_get_cached(txid_n, tried_lookup)
+                                if address is not None:
                                     address_group.add(address)
                                     continue
-                                except IndexError:
-                                    pass
 
                             for batch, cursor, cumsum in output_address_iterator:
                                 batch_idx = cache.load_batch(batch, cursor, cumsum)
@@ -242,16 +256,36 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     # ]))
 
                 bar.update(len(input_batch))
-                bar.set_postfix({"entities": len(entity_grouping.entity_idx_to_addresses),
-                                 "joined": entity_grouping.counter_joined_entities})
+                bar.set_postfix({
+                    "entities": len(entity_grouping.entity_idx_to_addresses),
+                    "joined": entity_grouping.counter_joined_entities,
+                    "iteration": iteration
+                })
+
+            if iteration and iteration % 500 == 0:
+                with open(f"compute_entities_{curr_tx}.pickle", "w+") as f:
+                    pickle.dump({
+                        "grouping": entity_grouping,
+                        "tx": curr_tx
+                    }
+                    , f)
 
             if len(address_group) > 1:
                 entity_grouping.update_from_address_group(list(address_group))
                 # tx_with_group.append(curr_tx)
 
     finally:
-        with open(f"results_{datetime.datetime.utcnow()}.json", "w+") as f:
-            json.dump({key: list(value) for key, value in entity_grouping.entity_idx_to_addresses.items()}, f)
+        with open(f"results_{datetime.datetime.utcnow()}.csv", "w+") as result_csv:
+            buffer = ""
+            for entity_id, addresses in entity_grouping.entity_idx_to_addresses.items():
+                buffer += "".join([f"{entity_id},{a}\n" for a in addresses])
+
+                # write the buffer in chunks of 1MB
+                if len(buffer) > 1_000_000:
+                    result_csv.write(buffer)
+                    buffer = ""
+
+            result_csv.write(buffer)
 
 
 if __name__ == "__main__":
@@ -271,6 +305,6 @@ if __name__ == "__main__":
         sort(input_path, 'input_addresses.csv')
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot, args.read_size)
     end = time.time_ns()
     print((end - start) / 1e9)
