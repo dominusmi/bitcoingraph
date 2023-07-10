@@ -2,16 +2,13 @@
 import argparse
 import datetime
 import io
-import json
 import pickle
 import time
 import typing
-import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import List, Optional
 
-from numba import jit
 from tqdm import tqdm
 
 from bitcoingraph import entities
@@ -203,6 +200,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             curr_tx = None
             address_group = set([])
+            skipped = 0
             for iteration, (input_batch, _, _) in enumerate(bar):
                 for tx, outputs in iterate_grouped_outputs(input_batch):
                     # We need to do this because a transaction group may be
@@ -217,15 +215,16 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     for txid_n in outputs:
                         idx = cache.get_lookup_index(txid_n)
                         if idx is not None:
-                            try:
-                                address = cache.try_get_cached(txid_n, idx)
-                            except IndexError:
-                                # This can happen when the address is "Unknown" (mistake?)
-                                # print(f"Skipping {txid_n}")
-                                continue
+                            address = cache.try_get_cached(txid_n, idx)
                             if address is None:
                                 with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
-                                    address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
+                                    try:
+                                        address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
+                                    except IndexError:
+                                        skipped += 1
+                                        # Can happen when the address was invalid (I suppose due to
+                                        # human error in the transaction)
+                                        continue
                             address_group.add(address)
                         else:
                             # try to get from latest cache
@@ -243,6 +242,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                                     address_group.add(address)
                                     break
                                 if txid_n < batch[0][0]:
+                                    skipped += 1
                                     # This can happen when the address is "Unknown" (mistake?)
                                     # print(f"Skipping {txid_n}")
                                     break
@@ -259,7 +259,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 bar.set_postfix({
                     "entities": len(entity_grouping.entity_idx_to_addresses),
                     "joined": entity_grouping.counter_joined_entities,
-                    "iteration": iteration
+                    "iteration": iteration,
+                    "skipped": skipped
                 })
 
             if iteration and iteration % 500 == 0:
