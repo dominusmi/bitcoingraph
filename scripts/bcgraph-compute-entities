@@ -32,6 +32,8 @@ parser.add_argument('--cached-batches', type=int, default=10000,
                     help='Number of batches to keep in memory. Compute estimated memory as chunk-size x this')
 parser.add_argument('--tot', type=int, default=None,
                     help='Total number of transactions, for progress bar')
+parser.add_argument('--resume', type=str, default=None,
+                    help='Pickle file to resume processing from')
 
 
 class Cache:
@@ -44,8 +46,9 @@ class Cache:
     cache_cursor: int
     cache_txid_start: OrderedDict[str, int]
     n_cached_batches: int
+    chunk_size: int
 
-    def __init__(self, n_cached_batches: int):
+    def __init__(self, n_cached_batches: int, chunk_size: int, path_to_output_address: Path):
         self.cumsum_row = [0]
         self.lookup_table: List[int] = [0] * n_cached_batches
         self.lookup_keys: List[str] = [""] * n_cached_batches
@@ -55,6 +58,12 @@ class Cache:
         self.cache_cursor = 0
         self.cache_txid_start: OrderedDict[str, int] = OrderedDict()
         self.n_cached_batches = n_cached_batches
+        self.chunk_size = chunk_size
+        self.file: typing.BinaryIO = open(path_to_output_address, "rb")
+
+    def __del__(self):
+        print("Freeing cache resources")
+        self.file.close()
 
     def get_lookup_index(self, txid_n: str) -> Optional[int]:
         left = 0
@@ -83,12 +92,12 @@ class Cache:
             return self.find_cached_address(cache_idx, txid_n)
         return None
 
-    def load_from_file(self, lookup_index: int, f: typing.BinaryIO, chunk_size: int, txid_n: str):
+    def load_from_file(self, lookup_index: int, txid_n: str):
         tell = self.lookup_table[lookup_index]
-        f.seek(tell)
-        buffer = f.read(chunk_size)
-        buffer += f.readline()
-        batch, cursor, cumsum = process_chunk(buffer.decode(), chunk_size, tell)
+        self.file.seek(tell)
+        buffer = self.file.read(self.chunk_size)
+        buffer += self.file.readline()
+        batch, cursor, cumsum = process_chunk(buffer.decode(), self.chunk_size, tell)
         batch_idx = self.load_batch(batch, cursor, cumsum)
         address = self.find_cached_address(batch_idx, txid_n)
         if address is None:
@@ -193,13 +202,66 @@ def iterate_grouped_outputs(batch):
         yield current_tx, current_group
 
 
-def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int):
-    # chunk_size = 10*1024*1024 # 10MB
+def resume_iterator(curr_tx, iterator):
+    for tx, outputs in iterator:
+        if tx == curr_tx:
+            return outputs
+    return None
+
+
+def process_outputs(outputs, address_group: typing.Set[str], output_address_iterator, cache: Cache):
+    skipped = 0
+    for txid_n in outputs:
+        idx = cache.get_lookup_index(txid_n)
+        if idx is not None:
+            address = cache.try_get_cached(txid_n, idx)
+            if address is None:
+                try:
+                    address = cache.load_from_file(idx, txid_n)
+                except IndexError:
+                    skipped += 1
+                    # Can happen when the address was invalid (I suppose due to
+                    # human error in the transaction)
+                    continue
+            address_group.add(address)
+        else:
+            # try to get from latest cache
+            if cache.lookup_cursor > 0:
+                tried_lookup = cache.lookup_cursor - 1
+                address = cache.try_get_cached(txid_n, tried_lookup)
+                if address is not None:
+                    address_group.add(address)
+                    continue
+
+            for batch, cursor, cumsum in output_address_iterator:
+                batch_idx = cache.load_batch(batch, cursor, cumsum)
+                if batch[0][0] <= txid_n <= batch[-1][0]:
+                    address = cache.find_cached_address(batch_idx, txid_n)
+                    address_group.add(address)
+                    break
+                if txid_n < batch[0][0]:
+                    # This can happen when the address is "Unknown" (mistake?)
+                    skipped += 1
+                    break
+    return skipped
+
+
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
+            resume: Optional[str]):
+
     print("Preparing cache")
-    cache = Cache(n_cached_batches=cached_batches)
+    cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size, path_to_output_address=input_path.joinpath('rel_output_address.csv'))
 
     entity_grouping = EntityGrouping()
     tx_with_group = []
+    curr_tx = None
+    resumed = True
+    if resume is not None:
+        resumed = False
+        with open(Path(resume).resolve(), "rb") as resume_file:
+            state_data = pickle.load(resume_file)
+            entity_grouping = state_data["grouping"]
+            curr_tx = state_data["tx"]
 
     try:
         with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
@@ -213,11 +275,27 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             else:
                 bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size, read_size))
 
-            curr_tx = None
+            iteration = 0
             address_group = set([])
             skipped = 0
-            for iteration, (input_batch, _, _) in enumerate(bar):
-                for tx, outputs in iterate_grouped_outputs(input_batch):
+            for input_batch, _, _ in bar:
+                iterator = iterate_grouped_outputs(input_batch)
+
+                # Resume from previous state if necessary
+                if not resumed:
+                    outputs = resume_iterator(curr_tx, iterator)
+                    if outputs is not None:
+                        # We need to process the outputs found for the tx to make sure we don't lose out on an
+                        # entity that was in between the current input_batch and the following.
+                        process_outputs(outputs, address_group, output_address_iterator, cache)
+
+                        resumed = True
+                        print(f"Resumed from {curr_tx}")
+                    else:
+                        iteration += 1
+                        continue
+
+                for tx, outputs in iterator:
                     # We need to do this because a transaction group may be
                     # split into multiple returned batches
                     if curr_tx != tx:
@@ -227,48 +305,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         address_group = set([])
                         curr_tx = tx
 
-                    for txid_n in outputs:
-                        idx = cache.get_lookup_index(txid_n)
-                        if idx is not None:
-                            address = cache.try_get_cached(txid_n, idx)
-                            if address is None:
-                                with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
-                                    try:
-                                        address = cache.load_from_file(idx, tmp, chunk_size, txid_n)
-                                    except IndexError:
-                                        skipped += 1
-                                        # Can happen when the address was invalid (I suppose due to
-                                        # human error in the transaction)
-                                        continue
-                            address_group.add(address)
-                        else:
-                            # try to get from latest cache
-                            if cache.lookup_cursor > 0:
-                                tried_lookup = cache.lookup_cursor - 1
-                                address = cache.try_get_cached(txid_n, tried_lookup)
-                                if address is not None:
-                                    address_group.add(address)
-                                    continue
-
-                            for batch, cursor, cumsum in output_address_iterator:
-                                batch_idx = cache.load_batch(batch, cursor, cumsum)
-                                if batch[0][0] <= txid_n <= batch[-1][0]:
-                                    address = cache.find_cached_address(batch_idx, txid_n)
-                                    address_group.add(address)
-                                    break
-                                if txid_n < batch[0][0]:
-                                    skipped += 1
-                                    # This can happen when the address is "Unknown" (mistake?)
-                                    # print(f"Skipping {txid_n}")
-                                    break
-                                    # raise IndexError("\n".join([
-                                    #     "Cannot happen. Summary:",
-                                    #     f"Highest key: {cache.lookup_keys[cache.lookup_cursor-1]}",
-                                    #     f"Looking for: {txid_n}",
-                                    #     f"Batch min:   {batch[0][0]}",
-                                    #     f"Tried to get {tried_lookup} key -> {cache.lookup_keys[tried_lookup]}",
-                                    #     f""
-                                    # ]))
+                    skipped += process_outputs(outputs, address_group, output_address_iterator, cache)
 
                 bar.update(len(input_batch))
                 bar.set_postfix({
@@ -278,14 +315,15 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     "skipped": skipped
                 })
 
-                if iteration and iteration % 5000 == 0:
+                if iteration and iteration % 10 == 0:
                     print("Dumping state")
                     with open(f"compute_entities_{curr_tx}.pickle", "wb+") as f:
                         pickle.dump({
                             "grouping": entity_grouping,
                             "tx": curr_tx
                         }
-                        , f)
+                            , f)
+                iteration += 1
 
             if len(address_group) > 1:
                 entity_grouping.update_from_address_group(list(address_group))
@@ -322,6 +360,6 @@ if __name__ == "__main__":
         sort(input_path, 'input_addresses.csv')
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot, args.read_size)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot, args.read_size, args.resume)
     end = time.time_ns()
     print((end - start) / 1e9)
