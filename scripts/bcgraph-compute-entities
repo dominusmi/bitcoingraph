@@ -263,13 +263,14 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     "skipped": skipped
                 })
 
-            if iteration and iteration % 500 == 0:
-                with open(f"compute_entities_{curr_tx}.pickle", "w+") as f:
-                    pickle.dump({
-                        "grouping": entity_grouping,
-                        "tx": curr_tx
-                    }
-                    , f)
+                if iteration and iteration % 5000 == 0:
+                    print("Dumping state")
+                    with open(f"compute_entities_{curr_tx}.pickle", "wb+") as f:
+                        pickle.dump({
+                            "grouping": entity_grouping,
+                            "tx": curr_tx
+                        }
+                        , f)
 
             if len(address_group) > 1:
                 entity_grouping.update_from_address_group(list(address_group))
