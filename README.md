@@ -221,6 +221,103 @@ Bitcoingraph provides a synchronisation script, which reads blocks from bitcoind
 * [Roman Karl](mailto:roman.karl@ait.ac.at)
 
 
+# Updates
+ 
+## Visualisation
+![Visualisation](docs/graph.png)
+
+### Explanation:
+
+- `Block`: a bitcoin block, with property `height`. Appends to the previous block to create the chain.
+
+
+- `Transaction`: a bitcoin transaction, with property `txid`
+
+
+- `Output`: Output created from a transaction, which is then used as input for a later transaction.
+Contains the property `txid_n`, where `n` is the index of the output, and float `value` as the BTC value.
+A transaction `123` with 2 outputs will create two nodes `123_1` and `123_2` both attached as in the 
+outward direction 
+
+   ```(:Transaction)-[:OUTPUT]->(:Output)```
+
+  When these outputs are used as input in a later 
+  transaction, a new link will be added:
+
+   ```(:Transaction)-[:OUTPUT]->(:Output)-[:INPUT]->(newTransaction:Transaction)```
+
+
+- `Address`: a bitcoin address, with property `address`. Old addresses using public keys are prefixed by `pk_`.
+The latter also generate their P2PKH and P2WPKH addresses, which are connected through the 
+`(publicKey:Address)-[:GENERATES]->(p2pkh:Address)` relationship
+
+
+- `Entity`: an entity is an extra node which is not part of the blockchain. It is computed in post-processing
+and is used to connect addresses that were used as input in the same transaction, basically making the assumption 
+that it implies they come from the same "Entity". Entities are merged together, meaning for example:
+  - Transaction `t1` receives inputs from addresses `a1`,`a2`,`a3`
+    - an entity is created connecting these addresses, `e1`
+  - Transaction `t2` receives inputs from addresses `a2`,`a4`
+    - since `a2` is already part of an entity, then `a4` is added to that same entity `e1`
+
+
+## Scripts
+1. bcgraph-graphexport: create the CSV files from the bitcoind service
+2. bcgraph-compute-entities: computes the entities starting from the CSV files, and saves them in a new file. 
+Should be run with `--skip-sort-input` except if the option was already provided in the graphexport.
+3. bcgraph-generate-pk: creates the connection `:GENERATES` explained earlier. Runs directly on the database
+4. bcgraph-synchronoize: keeps the database in sync with the new transactions. Note: although this can
+technically be run to load the entire database, it is a lot slower and highly discouraged. It should only be
+used to append to an existing database loaded with the CSVs.
+
+## Neo4j pointers
+- Before running a large query, always run the query with `EXPLAIN` first. This shows the plan of the
+database calls, and can be very useful to notice a suboptimal query
+- Don't be scared of using `WITH` to aggregate results during the query, it can save a lot of time. For example
+   ```cypher
+   MATCH (a:Address)
+   OPTIONAL MATCH (a)-[:BELONGS_TO]->(e:Entity)
+   WHERE a.address in ["123","456",..]
+   RETURN a,e
+   ```
+   looks like a good query. However, running it with explain will immediately show that the optional match
+   actually matches all of the addresses (completely ignoring the `WHERE` condition). Instead, the correct use would be
+   ```cypher
+   MATCH (a:Address)
+   WHERE a.address in ["123","456",..]
+   WITH a
+   OPTIONAL MATCH (a)-[:BELONGS_TO]->(e:Entity)
+   RETURN a,e
+   ```
+- Use transactions on large queries, both for read and writes:
+   ```cypher
+   MATCH (a:Address)
+   CALL {
+     // do something with the addresses
+   } IN TRANSACTION OF 1000 ROWS 
+   ```
+
+## Example queries
+
+Get the sum of bitcoins that passed through a given address.
+```cypher
+MATCH (a:Address)
+WHERE a.address = "1234"
+WITH a
+MATCH (a)<-[:USES]-(o:Output)
+RETURN a.address, sum(o.value)
+```
+also account for what went through all the entities
+```cypher
+MATCH (a:Address)
+WHERE a.address = "1234"
+WITH a
+MATCH (a)<-[:USES]-(o:Output)
+OPTIONAL MATCH (a)-[:BELONGS_TO]->()<-[:BELONGS_TO]-(connected_a)<-[:USES]-(connected_o:Output)
+WHERE connected_a <> a
+RETURN a.address, sum(o.value)+sum(connected_o.value)
+```
+
 ## License
 
 This original library is released under the [MIT license](http://opensource.org/licenses/MIT).
