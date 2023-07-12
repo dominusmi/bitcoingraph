@@ -270,13 +270,30 @@ Should be run with `--skip-sort-input` except if the option was already provided
 technically be run to load the entire database, it is a lot slower and highly discouraged. It should only be
 used to append to an existing database loaded with the CSVs.
 
+## Full import command
+```bash
+neo4j-admin database import full --overwrite-destination 
+  --nodes=:Block=blocks_header.csv,blocks.csv 
+  --nodes=:Transaction=transactions_header.csv,transactions.csv 
+  --nodes=:Output=outputs_header.csv,outputs.csv
+  --nodes=:Address=addresses_header.csv,addresses.csv 
+  --relationships=CONTAINS=rel_block_tx_header.csv,rel_block_tx.csv 
+  --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv 
+  --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv 
+  --relationships=INPUT=rel_input_header.csv,rel_input.csv 
+  --relationships=USES=rel_output_address_header.csv,rel_output_address.csv 
+  --nodes=:Entity=entity_header.csv,entity.csv 
+  --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address.csv  
+  <database name>
+```
+
 ## Neo4j pointers
 - Before running a large query, always run the query with `EXPLAIN` first. This shows the plan of the
 database calls, and can be very useful to notice a suboptimal query
 - Don't be scared of using `WITH` to aggregate results during the query, it can save a lot of time. For example
    ```cypher
    MATCH (a:Address)
-   OPTIONAL MATCH (a)-[:BELONGS_TO]->(e:Entity)
+   OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
    WHERE a.address in ["123","456",..]
    RETURN a,e
    ```
@@ -286,7 +303,7 @@ database calls, and can be very useful to notice a suboptimal query
    MATCH (a:Address)
    WHERE a.address in ["123","456",..]
    WITH a
-   OPTIONAL MATCH (a)-[:BELONGS_TO]->(e:Entity)
+   OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
    RETURN a,e
    ```
 - Use transactions on large queries, both for read and writes:
@@ -313,7 +330,7 @@ MATCH (a:Address)
 WHERE a.address = "1234"
 WITH a
 MATCH (a)<-[:USES]-(o:Output)
-OPTIONAL MATCH (a)-[:BELONGS_TO]->()<-[:BELONGS_TO]-(connected_a)<-[:USES]-(connected_o:Output)
+OPTIONAL MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(connected_a)<-[:USES]-(connected_o:Output)
 WHERE connected_a <> a
 RETURN a.address, sum(o.value)+sum(connected_o.value)
 ```
