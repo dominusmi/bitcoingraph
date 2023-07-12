@@ -284,6 +284,7 @@ neo4j-admin database import full --overwrite-destination
   --relationships=USES=rel_output_address_header.csv,rel_output_address.csv 
   --nodes=:Entity=entity_header.csv,entity.csv 
   --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address.csv  
+  --relationships=GENERATES=rel_address_address_header.csv,rel_address_address.csv 
   <database name>
 ```
 
