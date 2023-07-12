@@ -330,7 +330,23 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 # tx_with_group.append(curr_tx)
 
     finally:
-        with open(f"results_{datetime.datetime.utcnow()}.csv", "w+") as result_csv:
+
+        with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
+            header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
+
+        with open(input_path.joinpath("entity_header.csv"), "w+") as header:
+            header.writelines(["entity_id:ID(Entity)"])
+
+        with open(input_path.joinpath("entity.csv"), "w+") as entity_f:
+            buffer = ""
+            for entity_id in entity_grouping.entity_idx_to_addresses.keys():
+                buffer += f"{entity_id}\n"
+                if len(buffer) > 1_000_000:
+                    entity_f.write(buffer)
+
+            entity_f.write(buffer)
+
+        with open(input_path.joinpath(f"rel_entity_address.csv"), "w+") as result_csv:
             buffer = ""
             for entity_id, addresses in entity_grouping.entity_idx_to_addresses.items():
                 buffer += "".join([f"{entity_id},{a}\n" for a in addresses])
