@@ -237,8 +237,9 @@ def process_outputs(outputs, address_group: typing.Set[str], output_address_iter
                 batch_idx = cache.load_batch(batch, cursor, cumsum)
                 if batch[0][0] <= txid_n <= batch[-1][0]:
                     address = cache.find_cached_address(batch_idx, txid_n)
-                    address_group.add(address)
-                    break
+                    if address is not None:
+                        address_group.add(address)
+                        break
                 if txid_n < batch[0][0]:
                     # This can happen when the address is "Unknown" (mistake?)
                     skipped += 1
@@ -349,7 +350,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
         with open(input_path.joinpath(f"rel_entity_address.csv"), "w+") as result_csv:
             buffer = ""
             for entity_id, addresses in entity_grouping.entity_idx_to_addresses.items():
-                buffer += "".join([f"{entity_id},{a}\n" for a in addresses])
+                buffer += "".join([f"{entity_id},{a}\n" for a in addresses if a is not None])
 
                 # write the buffer in chunks of 1MB
                 if len(buffer) > 1_000_000:
