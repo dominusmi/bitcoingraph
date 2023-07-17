@@ -104,3 +104,37 @@ class TestSaveEntities():
 
         data = session.run("""MATCH (e:Entity {entity_id: "456"}) RETURN e""").data()
         assert len(data) == 0
+
+    def test_separate_three_have_entity(self, session):
+        session.run("""
+        MERGE (t1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: "123"})
+        MERGE (t2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: "456"})
+        MERGE (t3:Address {address: "3"})<-[:OWNER_OF]-(e3:Entity {entity_id: "789"})
+        """)
+
+        grouping = EntityGrouping()
+        grouping.entity_idx_to_addresses = {"1": ["1", "2", "3"]}
+
+        def run_save():
+            grouping.save_entities(session, False)
+            response = session.run("""
+            MATCH (e:Entity)
+            WITH e
+            OPTIONAL MATCH (e)-[:OWNER_OF]->(a:Address)
+            RETURN e, collect(a) as addresses
+            """)
+            return response.data()
+
+        data = run_save()
+        assert len(data) == 1
+        assert data[0]["e"]["entity_id"] == "123"
+        assert len(data[0]["addresses"])
+        assert set((x["address"] for x in data[0]["addresses"])) == {"1", "2", "3"}
+
+        # re-run
+        data = run_save()
+        assert len(data) == 1
+        assert data[0]["e"]["entity_id"] == "123"
+        assert len(data[0]["addresses"])
+        assert set((x["address"] for x in data[0]["addresses"])) == {"1", "2", "3"}
+
