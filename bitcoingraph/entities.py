@@ -271,6 +271,12 @@ class EntityGrouping:
             WHERE a in addrs
             WITH addrs, minA, e ORDER BY e.entity_id ASC
             WITH addrs, minA, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
+            WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
+            WITH *, CASE 
+                WHEN entityName STARTS WITH "+" THEN substring(entityName, 1) 
+                ELSE entityName 
+            END AS entityName
+
             // RETURN minEntity, addrs, minA, entities
             CALL {
                 WITH minEntity, addrs, minA
@@ -282,8 +288,11 @@ class EntityGrouping:
             
                 UNION 
                 
-                WITH minEntity, addrs, minA, entities
-                WITH minEntity, addrs, minA, entities WHERE minEntity IS NOT NULL
+                WITH minEntity, addrs, minA, entities, entityName
+                WITH minEntity, addrs, minA, entities, entityName 
+                    WHERE minEntity IS NOT NULL
+                SET minEntity.name = entityName
+                WITH *
                 MATCH (a:Address) WHERE a in addrs
                 MERGE (minEntity)-[:OWNER_OF]->(a)
                 WITH entities
