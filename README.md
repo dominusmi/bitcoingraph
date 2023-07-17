@@ -170,16 +170,16 @@ and create the following uniquness constraints:
 
 ```
     // Allows fast queries using the address (highly recommended)
-    CREATE CONSTRAINT ON (a:Address) ASSERT a.address IS UNIQUE;
+    CREATE CONSTRAINT FOR (a:Address) REQUIRE a.address IS UNIQUE;
     
     // Allows fast queries using the block height (highly recommended)
-    CREATE CONSTRAINT ON (b:Block) ASSERT b.height IS UNIQUE;
+    CREATE CONSTRAINT FOR (b:Block) REQUIRE b.height IS UNIQUE;
     
     // Allows fast queries using the output txid_n (Optional)
-    CREATE CONSTRAINT ON (o:Output) ASSERT o.txid_n IS UNIQUE;
+    CREATE CONSTRAINT FOR (o:Output) REQUIRE o.txid_n IS UNIQUE;
 
     // Allows fast queries using transaction txid (Optional)
-    CREATE CONSTRAINT ON (t:Transaction) ASSERT t.txid IS UNIQUE;
+    [CREATE CONSTRAINT FOR (t:Transaction) REQUIRE t.txid IS UNIQUE;]()
 ```
 
 Finally start Neo4J
