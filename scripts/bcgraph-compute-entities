@@ -72,7 +72,7 @@ class Cache:
 
         # if it's greater, we always return None. If it happens to be in the same batch
         # as the current greatest batch, it will be caught in the main code
-        if txid_n > self.lookup_keys[right]:
+        if txid_n >= self.lookup_keys[right]:
             return None
 
         while left <= right:
@@ -102,6 +102,7 @@ class Cache:
         address = self.find_cached_address(batch_idx, txid_n)
         if address is None:
             raise IndexError("load_from_file should always find the address")
+        return address
 
     def find_cached_address(self, cache_idx: int, txid_n: str) -> Optional[str]:
         for row in self.cached_batches[cache_idx]:
@@ -219,6 +220,7 @@ def process_outputs(outputs, address_group: typing.Set[str], output_address_iter
                 try:
                     address = cache.load_from_file(idx, txid_n)
                 except IndexError:
+                    print("Skipped idx found:", txid_n)
                     skipped += 1
                     # Can happen when the address was invalid (I suppose due to
                     # human error in the transaction)
@@ -241,9 +243,18 @@ def process_outputs(outputs, address_group: typing.Set[str], output_address_iter
                         address_group.add(address)
                         break
                 if txid_n < batch[0][0]:
-                    # This can happen when the address is "Unknown" (mistake?)
-                    skipped += 1
-                    break
+                    # Last chance, we try to get it from file now
+                    try:
+                        idx = cache.get_lookup_index(txid_n)
+                        if idx:
+                            address = cache.load_from_file(idx, txid_n)
+                            if address is not None:
+                                address_group.add(address)
+                    except IndexError:
+                        # This can happen when the address is "Unknown" (mistake?)
+                        print("Skipped idx not found:", txid_n)
+                        skipped += 1
+                        break
     return skipped
 
 
@@ -280,6 +291,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             address_group = set([])
             skipped = 0
             for input_batch, _, _ in bar:
+                count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
                 # Resume from previous state if necessary
@@ -307,8 +319,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         curr_tx = tx
 
                     skipped += process_outputs(outputs, address_group, output_address_iterator, cache)
+                    count_tx += 1
 
-                bar.update(len(input_batch))
+                bar.update(count_tx)
                 bar.set_postfix({
                     "entities": len(entity_grouping.entity_idx_to_addresses),
                     "joined": entity_grouping.counter_joined_entities,
