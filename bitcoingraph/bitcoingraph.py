@@ -172,6 +172,7 @@ class BitcoinGraph:
             for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
                 self.graph_db.add_block(block)
                 yield block.height
+        print("Finishing")
 
 
 def compute_entities(input_path, sort_input=True, sort_output_address=False):

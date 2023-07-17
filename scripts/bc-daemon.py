@@ -39,6 +39,7 @@ parser.add_argument('-b', '--max-blocks', type=int, default=1_000_000_000_000,
 
 def thread_synchronization(bcgraph: BitcoinGraph, max_blocks: int, queue_new_block: queue.Queue,
                            queue_stop: queue.Queue):
+
     while True:
         # This loop stop as soon as no more blocks are available
         try:
@@ -47,8 +48,14 @@ def thread_synchronization(bcgraph: BitcoinGraph, max_blocks: int, queue_new_blo
                 if not queue_stop.empty():
                     return
 
+            queue_new_block.put(None)
+            break
         except BlockchainException as e:
             print(f"Blockchain error: {e}. Trying again soon")
+
+        except StopIteration:
+            print("Finished synchronize")
+            break
 
         finally:
             # try again in 5 seconds
@@ -123,30 +130,34 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
                               args=(bcgraph, max_blocks, new_block_queue, sync_stop_queue))
     thread.start()
 
-
     post_process_stop_queue = queue.Queue()
     addresses_session = driver.session()
     addresses_queue = queue.Queue()
     addresses_thread = threading.Thread(target=thread_wrapper,
-                                        args=(lambda args: generate_addresses(addresses_session, *args), addresses_queue, post_process_stop_queue))
+                                        args=(
+                                        lambda args: generate_addresses(addresses_session, *args), addresses_queue,
+                                        post_process_stop_queue))
     addresses_thread.start()
 
     entities_session = driver.session()
     entities_queue = queue.Queue()
     upsert_thread = threading.Thread(target=thread_wrapper,
-                                     args=(lambda args: upsert_entities(entities_session, *args), entities_queue, post_process_stop_queue))
+                                     args=(lambda args: upsert_entities(entities_session, *args), entities_queue,
+                                           post_process_stop_queue))
     upsert_thread.start()
 
     stop_signal = False
     try:
         while True:
-            blocks = []
             try:
                 blocks = []
                 count_tries = 0
                 while True:
                     try:
                         block = new_block_queue.get_nowait()
+                        if block is None:
+                            stop_signal = True
+                            break
                         blocks.append(block)
                         if len(blocks) > 500 or stop_signal:
                             # max batch size of 50 blocks
@@ -185,6 +196,7 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
         addresses_session.close()
         entities_session.close()
         driver.close()
+
 
 if __name__ == "__main__":
     args = parser.parse_args()

@@ -161,7 +161,7 @@ def calculate_input_addresses(input_path):
 
 def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, max_height: int):
     query = """
-        MATCH (b:Block)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+        MATCH (b:Block)
         WHERE b.height >= $lower AND b.height < $higher
         WITH b
         MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
@@ -264,29 +264,33 @@ class EntityGrouping:
             if len(addresses) <= 1:
                 continue
             result = session.run("""
-            MATCH (a:Address)
-            WHERE a.address in $addresses
-            WITH a
-            OPTIONAL MATCH (e:Entity)--(a)
+            MATCH (a:Address) 
+            WHERE a.address IN $addresses
+            WITH collect(a) as addrs, min(a.address) as minA
+            OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
+            WHERE a in addrs
+            WITH addrs, minA, e ORDER BY e.entity_id ASC
+            WITH addrs, minA, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
+            // RETURN minEntity, addrs, minA, entities
             CALL {
-                WITH a,e
-                WITH a,e as entity WHERE entity IS NOT NULL
-                MERGE (a)-[:BELONGS_TO]->(entity)
-                RETURN entity
-
+                WITH minEntity, addrs, minA
+                WITH minEntity, addrs, minA WHERE minEntity IS NULL
+                CREATE (e:Entity {entity_id: minA})
+                WITH *
+                MATCH (a:Address) WHERE a in addrs
+                MERGE (e)-[:OWNER_OF]->(a)
+            
                 UNION 
-
-                WITH a,e
-                WITH a,e WHERE e IS NULL
-                WITH collect(a) as addresses
-                MERGE (entity:Entity {representative: $representative})
-                WITH entity, addresses
-                UNWIND addresses as a
-                MERGE (entity)<-[:BELONGS_TO]-(a)
-                RETURN entity
+                
+                WITH minEntity, addrs, minA, entities
+                WITH minEntity, addrs, minA, entities WHERE minEntity IS NOT NULL
+                MATCH (a:Address) WHERE a in addrs
+                MERGE (minEntity)-[:OWNER_OF]->(a)
+                WITH entities
+                MATCH (e:Entity) WHERE e in entities
+                DETACH DELETE (e)
             }
-            RETURN entity
-            """, addresses=list(addresses), representative=min(addresses))
+            """, addresses=list(addresses))
 
             result = result.consume()
 
