@@ -19,8 +19,9 @@ parser = argparse.ArgumentParser(
     description='Compute entities from exported block chain data')
 parser.add_argument('-i', '--input_path', required=True,
                     help='Input path')
-parser.add_argument('--skip-sort-input', action='store_true',
-                    help='This should only be set if the process crashed after reaching the log "Compute entities"')
+parser.add_argument('--sort-input', action='store_true',
+                    help='Sort the rel_input.csv. This should already be done in the export except if you used '
+                         'non-default arguments')
 parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
@@ -375,7 +376,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    sort_input = not args.skip_sort_input
+    sort_input = args.sort_input
     input_path = args.input_path
 
     if args.sort_output:
