@@ -3,6 +3,7 @@ import argparse
 import datetime
 import io
 import pickle
+import subprocess
 import time
 import typing
 from collections import OrderedDict
@@ -261,9 +262,10 @@ def process_outputs(outputs, address_group: typing.Set[str], output_address_iter
 
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str]):
-
     print("Preparing cache")
-    cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size, path_to_output_address=input_path.joinpath('rel_output_address.csv'))
+    cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size,
+                  path_to_output_address=input_path.joinpath('rel_output_address.csv'))
+    print("Cache ready")
 
     entity_grouping = EntityGrouping()
     tx_with_group = []
@@ -283,15 +285,16 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size, read_size)
 
             if tot is not None:
-                print(f"Total: {tot}")
-                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size, read_size), total=tot)
+                bar = tqdm(total=tot)
             else:
-                bar = tqdm(read_csv_in_chunks(f_rel_input, chunk_size, read_size))
+                bar = tqdm()
 
             iteration = 0
             address_group = set([])
             skipped = 0
-            for input_batch, _, _ in bar:
+            total_count_tx = 0
+            print("Starting main loop")
+            for input_batch, _, _ in read_csv_in_chunks(f_rel_input, chunk_size, read_size):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
@@ -322,6 +325,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     skipped += process_outputs(outputs, address_group, output_address_iterator, cache)
                     count_tx += 1
 
+                # Statistics section
+                total_count_tx += count_tx
                 bar.update(count_tx)
                 bar.set_postfix({
                     "entities": len(entity_grouping.entity_idx_to_addresses),
@@ -344,6 +349,13 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 entity_grouping.update_from_address_group(list(address_group))
                 # tx_with_group.append(curr_tx)
 
+        bar.set_postfix({
+            "entities": len(entity_grouping.entity_idx_to_addresses),
+            "joined": entity_grouping.counter_joined_entities,
+            "iteration": iteration,
+            "skipped": skipped,
+            "total_tx": total_count_tx
+        })
     finally:
 
         with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
@@ -383,7 +395,15 @@ if __name__ == "__main__":
         print("Sorting rel_output_address.csv")
         sort(input_path, 'rel_output_address.csv')
 
+    tot = args.tot
+    if args.tot is None:
+        print("Getting number of transactions")
+        tx_path = Path(input_path).resolve().joinpath("transactions.csv")
+        r = subprocess.run(["wc", "-l", tx_path.absolute().__str__()], stdout=subprocess.PIPE)
+        tot = int(r.stdout.decode().split(" ")[0])
+        print("Found {} transactions".format(tot))
+
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot, args.read_size, args.resume)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume)
     end = time.time_ns()
     print((end - start) / 1e9)
