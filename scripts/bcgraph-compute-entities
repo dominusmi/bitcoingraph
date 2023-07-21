@@ -383,13 +383,6 @@ if __name__ == "__main__":
         print("Sorting rel_output_address.csv")
         sort(input_path, 'rel_output_address.csv')
 
-    if sort_input:
-        print("Sorting rel_input.csv")
-        sort(input_path, 'rel_input.csv', '-k 2 -t ,')
-        entities.calculate_input_addresses(input_path)
-        print("Sorting input_addresses.csv")
-        sort(input_path, 'input_addresses.csv')
-
     start = time.time_ns()
     process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, args.tot, args.read_size, args.resume)
     end = time.time_ns()
