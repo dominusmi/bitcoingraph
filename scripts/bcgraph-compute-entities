@@ -69,10 +69,12 @@ class Cache:
 
     def load_indexes(self, output_address_iterator):
         progress = tqdm(output_address_iterator, desc="Indexing output")
-        curr = 0
-        for batch, cursor in progress:
+        for i, (batch, cursor) in enumerate(progress):
             self.load_batch(batch, cursor, only_index=True)
-            progress.set_postfix({"MB read": float(cursor) / 1e6})
+            if i % 100 == 0:
+                mb = float(cursor) / 1e3
+                progress.set_postfix({"KB read": "{:,.0f}".format(mb)})
+
 
     def get_lookup_index(self, txid_n: str) -> Optional[int]:
         left = 0
@@ -295,10 +297,28 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             address_group = set([])
             skipped = 0
             total_count_tx = 0
-            print("Indexing rel_output_address.csv")
-            with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
-                output_address_iterator = read_csv_in_chunks(tmp, chunk_size, read_size)
-                cache.load_indexes(output_address_iterator)
+
+            # INDEXING
+            # indexing_path = pathlib.Path().resolve().joinpath(f"indexing_{tot}_{chunk_size}.pickle")
+            # if indexing_path.exists():
+            #     print("Loading existing index file")
+            #     with open(indexing_path, "rb") as f_pickle:
+            #         data = pickle.load(f_pickle)
+            #         cache.lookup_cursor = data["lookup_cursor"]
+            #         cache.lookup_keys = data["lookup_keys"]
+            #         cache.lookup_table = data["lookup_table"]
+            # else:
+            #     print("Indexing rel_output_address.csv")
+            #     with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
+            #         output_address_iterator = read_csv_in_chunks(tmp, chunk_size, read_size)
+            #         cache.load_indexes(output_address_iterator)
+            #         with open(indexing_path,
+            #                   "wb+") as f_pickle:
+            #             pickle.dump({
+            #                 "lookup_cursor": cache.lookup_cursor,
+            #                 "lookup_keys": cache.lookup_keys,
+            #                 "lookup_table": cache.lookup_table
+            #             }, f_pickle)
 
             if tot is not None:
                 bar = tqdm(total=tot)
