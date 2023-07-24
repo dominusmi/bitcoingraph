@@ -97,18 +97,21 @@ class Cache:
 
         return result - 1
 
+    
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
         cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
         if cache_idx is not None:
             return self.find_cached_address(cache_idx, txid_n)
         return None
 
+    
     def load_from_file(self, lookup_index: int, txid_n: str):
         tell = self.lookup_table[lookup_index]
         self.file.seek(tell)
         buffer = self.file.read(self.chunk_size)
         buffer += self.file.readline()
-        batch, cursor = process_chunk(buffer.decode(), self.chunk_size, tell)
+        decoded = buffer.decode()
+        batch, cursor = process_chunk(decoded, self.chunk_size, tell)
         batch_idx = self.load_batch(batch, cursor)
         address = self.find_cached_address(batch_idx, txid_n)
         if address is None:
@@ -116,11 +119,15 @@ class Cache:
         return address
 
     def find_cached_address(self, cache_idx: int, txid_n: str) -> Optional[str]:
-        for row in self.cached_batches[cache_idx]:
-            if row[0] == txid_n:
-                return row[1]
+        import bisect
+        l = len(self.cached_batches[cache_idx])
+        idx = bisect.bisect([row[0] for row in self.cached_batches[cache_idx]], txid_n)
+        x = self.cached_batches[cache_idx][idx - 1]
+        if idx == l and x[0] != txid_n:
+            return None
 
-        return None
+        if x[0] == txid_n:
+            return x[1]
 
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
         txid_n = batch[0][0]
@@ -150,22 +157,17 @@ class Cache:
             return batch_idx
 
 
+def process_line(line):
+    line = line.strip()
+    idx = line.find(",")
+    return line[:idx], line[idx + 1:]
+
+
+
 def process_chunk(buffer: str, chunk_size: int, cursor: int):
-    max_elements = int(round(chunk_size / 100))
-    batch: List[List[str]] = [["", ""] for _ in range(max_elements)]
-    # cumsum = [0] * max_elements
-
-    virtual_io = io.StringIO(buffer)
-    n = 0
-    for i, line in enumerate(virtual_io.readlines()):
-        # cumsum[i] = cursor + virtual_io.tell()
-        row = line.split(",")
-        batch[i][0] = row[0].strip()
-        batch[i][1] = row[1].strip()
-        n += 1
-
-    return batch[:n], cursor  # , cumsum[:n]
-
+    # list comprehensions are known to be faster due to underlying
+    # optimisation done by CPython (not sure about PyPy)
+    return [process_line(line) for line in buffer.split("\n") if line], cursor
 
 def read_csv_in_chunks(file, chunk_size: int, read_size: int) -> (List[List[str]], int):  # 10MB
     s = file.read(read_size)
@@ -220,6 +222,7 @@ def resume_iterator(curr_tx, iterator):
         if tx == curr_tx:
             return outputs
     return None
+
 
 
 def process_outputs(outputs, address_group: typing.Set[str], output_address_iterator, cache: Cache):
@@ -291,7 +294,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     try:
         with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
                 input_path.joinpath('rel_output_address.csv'), 'rb') as f_rel_output_address:
-
 
             iteration = 0
             address_group = set([])
@@ -433,7 +435,8 @@ if __name__ == "__main__":
         print("Getting number of transactions")
         tx_path = Path(input_path).resolve().joinpath("transactions.csv")
         r = subprocess.run(["wc", "-l", tx_path.absolute().__str__()], stdout=subprocess.PIPE)
-        tot = int(r.stdout.decode().split(" ")[0])
+        out = r.stdout.decode()
+        tot = int(out.split(" ")[0])
         print("Found {} transactions".format(tot))
 
     start = time.time_ns()
