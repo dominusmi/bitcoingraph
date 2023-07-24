@@ -1,4 +1,7 @@
-import neo4j
+from bitcoingraph.common import is_pypy
+
+if not is_pypy():
+    import neo4j
 
 from bitcoingraph.neo4j import Neo4jController
 from bitcoingraph.helper import to_time, to_json

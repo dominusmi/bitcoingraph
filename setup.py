@@ -1,4 +1,7 @@
 from __future__ import print_function
+
+import platform
+
 from setuptools import setup
 from setuptools.command.test import test as TestCommand
 import io
@@ -18,6 +21,16 @@ def read(*filenames, **kwargs):
 
 
 long_description = read('README.rst')
+
+_compatible_install = [
+    'neo4j>=4',
+    'requests>=2.5.0',
+    'tqdm~=4.65.0'
+]
+
+if platform.python_implementation() == "PyPy":
+    print("Skipping install neo4j because of PyPy error")
+    _compatible_install.pop(0)
 
 
 class PyTest(TestCommand):
@@ -56,16 +69,15 @@ setup(
     install_requires=[
         'requests>=2.5.0',
         'tqdm~=4.65.0',
-        'neo4j>=4'
     ],
     classifiers=[
-         'Development Status :: 4 - Beta',
-         'Environment :: Console',
-         'Intended Audience :: Developers',
-         'License :: OSI Approved :: MIT License',
-         'Operating System :: OS Independent',
-         'Programming Language :: Python :: 3',
-         'Topic :: Software Development :: Libraries',
+        'Development Status :: 4 - Beta',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 3',
+        'Topic :: Software Development :: Libraries',
     ],
 
     # Testing

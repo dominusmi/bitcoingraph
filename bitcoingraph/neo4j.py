@@ -1,8 +1,3 @@
-
-import json
-
-import neo4j
-import requests
 from datetime import date, datetime, timezone
 
 
@@ -21,7 +16,7 @@ class Neo4jException(Exception):
 
 class Neo4jController:
 
-    def __init__(self, driver: neo4j.Driver):
+    def __init__(self, driver: 'neo4j.Driver'):
         self.driver = driver
 
 

@@ -8,7 +8,6 @@ from pathlib import Path
 from time import sleep
 from typing import Dict, List, Set
 
-import neo4j
 import tqdm
 
 
@@ -159,7 +158,7 @@ def calculate_input_addresses(input_path):
                 input_address_writer.writerow([txid, match_address])
 
 
-def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, max_height: int):
+def fetch_transactions_from_blocks(session: 'neo4j.Session', start_height: int, max_height: int):
     query = """
         MATCH (b:Block)
         WHERE b.height >= $lower AND b.height < $higher
@@ -172,7 +171,7 @@ def fetch_transactions_from_blocks(session: neo4j.Session, start_height: int, ma
     return result.data()
 
 
-def _fetch_outputs_thread(session: neo4j.Session, batch_size: int, skip: int,
+def _fetch_outputs_thread(session: 'neo4j.Session', batch_size: int, skip: int,
                           result_queue: queue.Queue, stop_queue: queue.Queue):
 
     try:
@@ -254,7 +253,7 @@ class EntityGrouping:
             self.entity_idx_counter += 1
             self.counter_entities += 1
 
-    def save_entities(self, session: neo4j.Session, display_progress=False):
+    def save_entities(self, session: 'neo4j.Session', display_progress=False):
         if display_progress:
             iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses),
                                  desc="Saving entities")
@@ -304,7 +303,7 @@ class EntityGrouping:
             result = result.consume()
 
 
-def add_entities(batch_size: int, resume: str, driver: neo4j.Driver):
+def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
     session = driver.session()
     result_queue = queue.Queue()
     stop_queue = queue.Queue()
