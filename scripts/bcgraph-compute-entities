@@ -2,6 +2,7 @@
 import argparse
 import datetime
 import io
+import os
 import pickle
 import subprocess
 import time
@@ -432,11 +433,9 @@ if __name__ == "__main__":
 
     tot = args.tot
     if args.tot is None:
-        print("Getting number of transactions")
+        print("Getting upper bound approximate number of transactions for statistics display")
         tx_path = Path(input_path).resolve().joinpath("transactions.csv")
-        r = subprocess.run(["wc", "-l", tx_path.absolute().__str__()], stdout=subprocess.PIPE)
-        out = r.stdout.decode()
-        tot = int(out.split(" ")[0])
+        tot = int(round(os.path.getsize(tx_path) / 70))
         print("Found {} transactions".format(tot))
 
     start = time.time_ns()
