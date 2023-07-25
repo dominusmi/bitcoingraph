@@ -217,6 +217,9 @@ class EntityGrouping:
 
     def update_from_address_group(self, addresses: List[str]):
         found_entities_idx: Set[int] = set([])
+        if len(addresses) <= 1:
+            return
+
         for addr in addresses:
             entity_idx = self.address_to_entity_idx.get(addr, None)
             if entity_idx is not None:
@@ -243,8 +246,6 @@ class EntityGrouping:
             self.counter_joined_entities += len(found_entities_idx) - 1
 
         else:
-            if len(addresses) <= 1:
-                return
             # create a new entity
             entity_idx = self.entity_idx_counter
             for addr in addresses:
