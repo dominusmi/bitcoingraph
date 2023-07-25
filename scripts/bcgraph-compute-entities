@@ -38,6 +38,10 @@ parser.add_argument('--tot', type=int, default=None,
                     help='Total number of transactions, for progress bar')
 parser.add_argument('--resume', type=str, default=None,
                     help='Pickle file to resume processing from')
+parser.add_argument('--max-queue-size', type=int, default=10_000_000,
+                    help='As the file is read, if an output is "too far away", it\'s kept in the queue. Make this large for better performance')
+parser.add_argument('--start-distance', type=int, default=1,
+                    help="If an output is further than this distance, put it in the queue. Should be kept low.")
 
 
 class Cache:
@@ -311,7 +315,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
 
 #@profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
-            resume: Optional[str]):
+            resume: Optional[str], max_queue_size: int, start_distance: int):
     print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size,
                   path_to_output_address=input_path.joinpath('rel_output_address.csv'))
@@ -320,8 +324,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     entity_grouping = EntityGrouping()
     tx_with_group = []
     curr_tx = None
-    max_queue_size = 1_000_000
-    max_distance = 10
     previous_time = time.time()
     resumed = True
     if resume is not None:
@@ -393,6 +395,14 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         iteration += 1
                         continue
 
+                to_remove_from_queue = []
+                percentage_queue_to_max = len(queued_output_groups) / max_queue_size * 100
+                if percentage_queue_to_max < 50:
+                    percentage_queue_to_max = 0
+                else:
+                    percentage_queue_to_max = (percentage_queue_to_max-40) * 0.1
+                dynamic_distance = int(round(percentage_queue_to_max))
+
                 for tx, outputs, leftover in iterator:
                     # if interchunk_transaction_group is not None and leftover:
                     #     if tx == interchunk_transaction_group[0]:
@@ -423,18 +433,11 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         continue
 
                     skipped += fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
-                                                              queued_output_groups, max_distance=max_distance)
+                                                              queued_output_groups, max_distance=start_distance+dynamic_distance)
                     entity_grouping.update_from_address_group(list(address_group))
                     address_group = set([])
                     count_tx += 1
 
-                to_remove_from_queue = []
-                percentage_queue_to_max = len(queued_output_groups) / max_queue_size * 100
-                if percentage_queue_to_max < 50:
-                    percentage_queue_to_max *= 0.1
-                else:
-                    percentage_queue_to_max = (percentage_queue_to_max * 0.1) ** 2
-                dynamic_distance = int(round(percentage_queue_to_max))
 
                 start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
@@ -486,7 +489,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 entity_grouping.update_from_address_group(list(address_group))
                 # tx_with_group.append(curr_tx)
 
-            bar.set_description("Emptying queue")
+            print("Emptying queue")
             for queued_output_group in queued_output_groups:
                 tmp_address_group = set([])
                 skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
@@ -506,7 +509,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 "grouping": entity_grouping,
             }, f)
     finally:
-        bar.set_description("Saving files")
+        print("Saving files")
         with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
             header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
 
@@ -552,6 +555,6 @@ if __name__ == "__main__":
         print("Found {} transactions".format(tot))
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume, args.max_queue_size, args.start_distance)
     end = time.time_ns()
     print((end - start) / 1e9)
