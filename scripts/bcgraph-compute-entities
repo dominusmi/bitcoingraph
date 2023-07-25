@@ -132,7 +132,7 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    #@profile
+    # @profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
         txid_n = batch[0][0]
 
@@ -227,7 +227,7 @@ def resume_iterator(curr_tx, iterator):
 
 
 def output_distance(out1, out2):
-    return int(out1[:3], 16) - int(out2[:3], 16)
+    return int(out1[:4], 16) - int(out2[:4], 16)
 
 
 def bisect_right_lambda(a, x, key):
@@ -245,13 +245,14 @@ def bisect_right_lambda(a, x, key):
     while lo < hi:
         mid = (lo + hi) // 2
         # Use __lt__ to match the logic in list.sort() and in heapq
-        if x < key(a,mid):
+        if x < key(a, mid):
             hi = mid
         else:
             lo = mid + 1
     return lo
 
-#@profile
+
+# @profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=1):
@@ -316,7 +317,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
     return skipped
 
 
-#@profile
+# @profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str], max_queue_size: int, start_distance: int):
     print("Preparing cache")
@@ -379,7 +380,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             print("Starting main loop")
             interchunk_transaction_group = None
-            for input_batch, _ in read_csv_in_chunks(f_rel_input, 100000, max(read_size,100000)):
+            for input_batch, _ in read_csv_in_chunks(f_rel_input, 100000, max(read_size, 100000)):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
@@ -403,7 +404,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 if percentage_queue_to_max < 50:
                     percentage_queue_to_max = 0
                 else:
-                    percentage_queue_to_max = (percentage_queue_to_max-40) * 0.1
+                    percentage_queue_to_max = (percentage_queue_to_max - 40) * 0.1
                 dynamic_distance = int(round(percentage_queue_to_max))
 
                 for tx, outputs, leftover in iterator:
@@ -418,7 +419,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         if interchunk_transaction_group[0] != tx:
                             skipped += fill_address_group_for_outputs(interchunk_transaction_group[1], address_group,
                                                                       output_address_iterator, cache,
-                                                                      queued_output_groups, max_distance=start_distance+dynamic_distance)
+                                                                      queued_output_groups,
+                                                                      max_distance=start_distance + dynamic_distance)
                             entity_grouping.update_from_address_group(list(address_group))
                             address_group = set([])
                             curr_tx = tx
@@ -437,17 +439,18 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         continue
 
                     skipped += fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
-                                                              queued_output_groups, max_distance=start_distance+dynamic_distance)
+                                                              queued_output_groups,
+                                                              max_distance=start_distance + dynamic_distance)
                     entity_grouping.update_from_address_group(list(address_group))
                     address_group = set([])
                     count_tx += 1
-
 
                 start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
                 for out_idx, queued_output_group in enumerate(queued_output_groups):
                     if n_queued - len(to_remove_from_queue) < max_queue_size and \
-                            output_distance(queued_output_group[-1], start_position) > dynamic_distance + start_distance:
+                            output_distance(queued_output_group[-1],
+                                            start_position) > dynamic_distance + start_distance:
                         # we can break since they're sorted by largest, so all the following would be larger
                         break
 
@@ -559,6 +562,7 @@ if __name__ == "__main__":
         print("Found {} transactions".format(tot))
 
     start = time.time_ns()
-    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume, args.max_queue_size, args.start_distance)
+    process(Path(input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume,
+            args.max_queue_size, args.start_distance)
     end = time.time_ns()
     print((end - start) / 1e9)
