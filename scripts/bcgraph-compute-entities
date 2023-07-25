@@ -419,6 +419,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                             entity_grouping.update_from_address_group(list(address_group))
                             address_group = set([])
                             curr_tx = tx
+                            count_tx += 1
                         else:
                             outputs.extend(interchunk_transaction_group[1])
 
