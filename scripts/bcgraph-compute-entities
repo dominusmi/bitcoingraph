@@ -254,7 +254,7 @@ def bisect_right_lambda(a, x, key):
 #@profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
-                                   queued_output_groups: Optional[List[List[str]]], max_distance=10):
+                                   queued_output_groups: Optional[List[List[str]]], max_distance=1):
     if queued_output_groups is not None:
         # Should be set to None when we're processing queued items, which are already sorted and with the distance check
         # already done
@@ -415,7 +415,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         if interchunk_transaction_group[0] != tx:
                             skipped += fill_address_group_for_outputs(interchunk_transaction_group[1], address_group,
                                                                       output_address_iterator, cache,
-                                                                      queued_output_groups)
+                                                                      queued_output_groups, max_distance=start_distance+dynamic_distance)
                             entity_grouping.update_from_address_group(list(address_group))
                             address_group = set([])
                             curr_tx = tx
