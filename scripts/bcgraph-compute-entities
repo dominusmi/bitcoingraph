@@ -443,7 +443,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 n_queued = len(queued_output_groups)
                 for out_idx, queued_output_group in enumerate(queued_output_groups):
                     if n_queued - len(to_remove_from_queue) < max_queue_size and \
-                            output_distance(queued_output_group[-1], start_position) > dynamic_distance:
+                            output_distance(queued_output_group[-1], start_position) > dynamic_distance + start_distance:
                         # we can break since they're sorted by largest, so all the following would be larger
                         break
 
