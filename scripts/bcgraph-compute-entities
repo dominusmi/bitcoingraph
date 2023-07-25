@@ -128,7 +128,7 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    #@profile
+    @profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
         txid_n = batch[0][0]
 
@@ -226,7 +226,28 @@ def output_distance(out1, out2):
     return int(out1[:3], 16) - int(out2[:3], 16)
 
 
-#@profile
+def bisect_right_lambda(a, x, key):
+    """Return the index where to insert item x in list a, assuming a is sorted.
+
+    The return value i is such that all e in a[:i] have e <= x, and all e in
+    a[i:] have e > x.  So if x already appears in the list, a.insert(x) will
+    insert just after the rightmost x already there.
+
+    Optional args lo (default 0) and hi (default len(a)) bound the
+    slice of a to be searched.
+    """
+    lo = 0
+    hi = len(a)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        # Use __lt__ to match the logic in list.sort() and in heapq
+        if x < key(a,mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+@profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=10):
@@ -237,7 +258,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
 
         start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
         if output_distance(outputs[-1], start_position) > max_distance:
-            insert_at = bisect.bisect_right([x[-1] for x in queued_output_groups], outputs[-1])
+            insert_at = bisect_right_lambda(queued_output_groups, outputs[-1], lambda array_, idx_: array_[idx_][-1])
             queued_output_groups.insert(insert_at, outputs)
             return 0
 
@@ -288,7 +309,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
     return skipped
 
 
-#@profile
+@profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str]):
     print("Preparing cache")
