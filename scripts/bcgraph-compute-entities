@@ -128,14 +128,12 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    #@profile
+    # @profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
         txid_n = batch[0][0]
 
         # This means it's not already loaded
-        if 0 > self.lookup_cursor and tell > self.lookup_table[self.lookup_cursor-1]:
-            pass
-        else:
+        if self.lookup_cursor == 0 or tell > self.lookup_table[self.lookup_cursor - 1]:
             if (self.lookup_cursor + 1) % self.n_cached_batches == 0:
                 self.lookup_table.extend([0] * self.n_cached_batches)
                 self.lookup_keys.extend([""] * self.n_cached_batches)
@@ -223,8 +221,26 @@ def resume_iterator(curr_tx, iterator):
             return outputs
     return None
 
-#@profile
-def process_outputs(outputs, address_group: typing.Set[str], output_address_iterator, cache: Cache):
+
+def output_distance(out1, out2):
+    return int(out1[:3], 16) - int(out2[:3], 16)
+
+
+# @profile
+def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
+                                   cache: Cache,
+                                   queued_output_groups: Optional[List[List[str]]], max_distance=10):
+    if queued_output_groups is not None:
+        # Should be set to None when we're processing queued items, which are already sorted and with the distance check
+        # already done
+        outputs.sort()
+
+        start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
+        if output_distance(outputs[-1], start_position) > max_distance:
+            insert_at = bisect.bisect_right([x[-1] for x in queued_output_groups], outputs[-1])
+            queued_output_groups.insert(insert_at, outputs)
+            return 0
+
     skipped = 0
     for txid_n in outputs:
         idx = cache.get_lookup_index(txid_n)
@@ -271,7 +287,8 @@ def process_outputs(outputs, address_group: typing.Set[str], output_address_iter
                         break
     return skipped
 
-#@profile
+
+# @profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str]):
     print("Preparing cache")
@@ -282,7 +299,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     entity_grouping = EntityGrouping()
     tx_with_group = []
     curr_tx = None
-    max_queue_size = 20000
+    max_queue_size = 1_000_000
+    max_distance = 20
     previous_time = time.time()
     resumed = True
     if resume is not None:
@@ -335,7 +353,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             print("Starting main loop")
             interchunk_transaction_group = None
-            for input_batch, _ in read_csv_in_chunks(f_rel_input, 2000, 100000):
+            for input_batch, _ in read_csv_in_chunks(f_rel_input, chunk_size, read_size):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
@@ -345,7 +363,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     if outputs is not None:
                         # We need to process the outputs found for the tx to make sure we don't lose out on an
                         # entity that was in between the current input_batch and the following.
-                        process_outputs(outputs, address_group, output_address_iterator, cache)
+                        fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
+                                                       queued_output_groups)
 
                         resumed = True
                         print(f"Resumed from {curr_tx}")
@@ -363,13 +382,16 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         # We need to do this because a transaction group may be
                         # split into multiple returned batches
                         if interchunk_transaction_group[0] != tx:
+                            skipped += fill_address_group_for_outputs(interchunk_transaction_group[1], address_group,
+                                                                      output_address_iterator, cache,
+                                                                      queued_output_groups)
                             entity_grouping.update_from_address_group(list(address_group))
                             address_group = set([])
                             curr_tx = tx
-                            interchunk_transaction_group = None
                         else:
                             outputs.extend(interchunk_transaction_group[1])
-                            interchunk_transaction_group = None
+
+                        interchunk_transaction_group = None
 
                     if leftover:
                         interchunk_transaction_group = (tx, outputs)
@@ -379,32 +401,27 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         count_tx += 1
                         continue
 
-                    outputs.sort()
-
-                    def output_distance(out1, out2):
-                        return int(out1[:3], 16) - int(out2[:3], 16)
-
-                    start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
-                    if output_distance(outputs[-1], start_position) > 205:
-                        insert_at = bisect.bisect_right([x[-1] for x in queued_output_groups], outputs[-1])
-                        queued_output_groups.insert(insert_at, outputs)
-                        continue
-
-                    skipped += process_outputs(outputs, address_group, output_address_iterator, cache)
+                    skipped += fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
+                                                              queued_output_groups, max_distance=max_distance)
+                    entity_grouping.update_from_address_group(list(address_group))
+                    address_group = set([])
                     count_tx += 1
 
                 to_remove_from_queue = []
+                dynamic_distance = int(round((4096 - max_distance) / max_queue_size * len(queued_output_groups)))
                 start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
                 for out_idx, queued_output_group in enumerate(queued_output_groups):
-                    if n_queued - len(to_remove_from_queue) < max_queue_size and output_distance(queued_output_group[-1], start_position) > 0:
+                    if n_queued - len(to_remove_from_queue) < max_queue_size and \
+                            output_distance(queued_output_group[-1], start_position) > dynamic_distance:
                         # we can break since they're sorted by largest, so all the following would be larger
                         break
 
                     # the "real" address group is still in use at this point, and we don't
                     # want to pollute it, so we create this temporary one
                     tmp_address_group = set([])
-                    skipped += process_outputs(queued_output_group, tmp_address_group, output_address_iterator, cache)
+                    skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
+                                                              output_address_iterator, cache, None)
                     entity_grouping.update_from_address_group(list(tmp_address_group))
                     to_remove_from_queue.append(out_idx)
                     count_tx += 1
@@ -422,7 +439,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     "joined": entity_grouping.counter_joined_entities,
                     "iteration": iteration,
                     "skipped": skipped,
-                    "queue size": "{:.0f}".format(len(queued_output_groups))
+                    "queue size": "{:.0f}".format(len(queued_output_groups)),
+                    "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
+                    "max_distance": dynamic_distance
                 })
 
                 now = time.time()
@@ -433,8 +452,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         pickle.dump({
                             "grouping": entity_grouping,
                             "tx": curr_tx
-                        }
-                            , f)
+                        }, f)
                 iteration += 1
 
             if len(address_group) > 1:
@@ -444,7 +462,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             bar.set_description("Emptying queue")
             for queued_output_group in queued_output_groups:
                 tmp_address_group = set([])
-                skipped += process_outputs(queued_output_group, tmp_address_group, output_address_iterator, cache)
+                skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
+                                                          output_address_iterator, cache, None)
                 entity_grouping.update_from_address_group(list(tmp_address_group))
                 total_count_tx += 1
 
@@ -455,8 +474,12 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             "skipped": skipped,
             "total_tx": total_count_tx
         })
+        with open(f"compute_entities_end_{datetime.datetime.utcnow().isoformat()[:-7]}", "wb+") as f:
+            pickle.dump({
+                "grouping": entity_grouping,
+            }, f)
     finally:
-
+        bar.set_description("Saving files")
         with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
             header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
 
@@ -467,7 +490,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             buffer = ""
             for entity_id in entity_grouping.entity_idx_to_addresses.keys():
                 buffer += f"{entity_id}\n"
-                if len(buffer) > 1_000_000:
+                if len(buffer) > 10_000_000:
                     entity_f.write(buffer)
 
             entity_f.write(buffer)
