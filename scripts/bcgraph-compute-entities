@@ -408,7 +408,13 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     count_tx += 1
 
                 to_remove_from_queue = []
-                dynamic_distance = int(round(len(queued_output_groups) / max_queue_size))
+                percentage_queue_to_max = len(queued_output_groups) / max_queue_size * 100
+                if percentage_queue_to_max < 50:
+                    percentage_queue_to_max *= 0.1
+                else:
+                    percentage_queue_to_max = (percentage_queue_to_max * 0.1) ** 2
+                dynamic_distance = int(round(percentage_queue_to_max))
+
                 start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
                 for out_idx, queued_output_group in enumerate(queued_output_groups):
