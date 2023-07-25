@@ -255,6 +255,9 @@ def bisect_right_lambda(a, x, key):
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=1):
+    if len(outputs) <= 1:
+        return 0
+
     if queued_output_groups is not None:
         # Should be set to None when we're processing queued items, which are already sorted and with the distance check
         # already done
