@@ -128,7 +128,7 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    # @profile
+    #@profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
         txid_n = batch[0][0]
 
@@ -226,7 +226,7 @@ def output_distance(out1, out2):
     return int(out1[:3], 16) - int(out2[:3], 16)
 
 
-# @profile
+#@profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=10):
@@ -288,7 +288,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
     return skipped
 
 
-# @profile
+#@profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str]):
     print("Preparing cache")
@@ -300,7 +300,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     tx_with_group = []
     curr_tx = None
     max_queue_size = 1_000_000
-    max_distance = 20
+    max_distance = 10
     previous_time = time.time()
     resumed = True
     if resume is not None:
@@ -353,7 +353,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             print("Starting main loop")
             interchunk_transaction_group = None
-            for input_batch, _ in read_csv_in_chunks(f_rel_input, chunk_size, read_size):
+            for input_batch, _ in read_csv_in_chunks(f_rel_input, 100000, max(read_size,100000)):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
@@ -408,7 +408,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     count_tx += 1
 
                 to_remove_from_queue = []
-                dynamic_distance = int(round((4096 - max_distance) / max_queue_size * len(queued_output_groups)))
+                dynamic_distance = int(round(len(queued_output_groups) / max_queue_size))
                 start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
                 for out_idx, queued_output_group in enumerate(queued_output_groups):
