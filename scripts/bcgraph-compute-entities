@@ -413,7 +413,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         # We need to do this because a transaction group may be
                         # split into multiple returned batches
                         if interchunk_transaction_group[0] != tx:
-                            queued_output_groups.append(outputs)
+                            queued_output_groups.append(interchunk_transaction_group[1])
                         else:
                             outputs.extend(interchunk_transaction_group[1])
 
