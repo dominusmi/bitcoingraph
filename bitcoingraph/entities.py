@@ -6,7 +6,7 @@ import queue
 import uuid
 from pathlib import Path
 from time import sleep
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional, Iterable
 
 import tqdm
 
@@ -209,11 +209,13 @@ def _fetch_outputs_thread(session: 'neo4j.Session', batch_size: int, skip: int,
 class EntityGrouping:
     def __init__(self):
         self.entity_idx_counter = 0
-        self.entity_idx_to_addresses: Dict[int, Set[str]] = {}  # in theory, could be a list, but slightly more complex logic for little gain
+        self.entity_idx_to_addresses: Dict[int, Set[str]] = {}
         self.address_to_entity_idx: Dict[str, int] = {}
         self.entity_idx_counter = 0
         self.counter_entities = 0
         self.counter_joined_entities = 0
+        self.last_updated: Dict[int, int] = dict([])
+        self.last_empty = 0
 
     # @profile
     def update_from_address_group(self, addresses: List[str]):
@@ -237,6 +239,7 @@ class EntityGrouping:
                     continue
 
                 entity_addresses_to_merge = self.entity_idx_to_addresses.pop(entity_idx)
+
                 moved_addresses.update(entity_addresses_to_merge)
                 entity_address_set.update(entity_addresses_to_merge)
 
@@ -253,8 +256,31 @@ class EntityGrouping:
             for addr in addresses:
                 self.address_to_entity_idx[addr] = entity_idx
             self.entity_idx_to_addresses[entity_idx] = set(addresses)
+
             self.entity_idx_counter += 1
             self.counter_entities += 1
+
+    # def empty_old(self, distance: int):
+    #     to_delete = set([])
+    #     to_return = {}
+    #     for entity_idx, last_updated_value in self.last_updated.items():
+    #         if self.entity_idx_counter - last_updated_value > distance:
+    #
+    #             address_set = self.entity_idx_to_addresses[entity_idx]
+    #             self.entity_idx_to_addresses[entity_idx] = None
+    #             for addr in address_set:
+    #                 self.address_to_entity_idx.pop(addr)
+    #
+    #             to_delete.add(entity_idx)
+    #             to_return[entity_idx] = address_set
+    #
+    #     for k in to_delete:
+    #         self.last_updated.pop(k)
+    #
+    #     self.last_empty = self.entity_idx_counter
+    #     return to_return
+
+
 
     def save_entities(self, session: 'neo4j.Session', display_progress=False):
         if display_progress:
