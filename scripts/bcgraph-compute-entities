@@ -68,6 +68,7 @@ class Cache:
         self.n_cached_batches = n_cached_batches
         self.chunk_size = chunk_size
         self.file: typing.BinaryIO = open(path_to_output_address, "rb")
+        self.cache_full = False
 
     def __del__(self):
         print("Freeing cache resources")
@@ -108,14 +109,14 @@ class Cache:
             return self.find_cached_address(cache_idx, txid_n)
         return None
 
-    def load_from_file(self, lookup_index: int, txid_n: str):
+    def load_from_file(self, lookup_index: int, txid_n: str, save_batch=True):
         tell = self.lookup_table[lookup_index]
         self.file.seek(tell)
         buffer = self.file.read(self.chunk_size)
         buffer += self.file.readline()
         decoded = buffer.decode()
         batch, cursor = process_chunk(decoded, self.chunk_size, tell)
-        batch_idx = self.load_batch(batch, cursor)
+        batch_idx = self.load_batch(batch, cursor, save_batch=save_batch)
         address = self.find_cached_address(batch_idx, txid_n)
         if address is None:
             raise IndexError("load_from_file should always find the address")
@@ -133,7 +134,7 @@ class Cache:
             return x[1]
 
     # @profile
-    def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False):
+    def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False, save_batch=True):
         txid_n = batch[0][0]
 
         # This means it's not already loaded
@@ -155,7 +156,13 @@ class Cache:
 
             self.cached_batches[self.cache_cursor] = batch
             batch_idx = self.cache_cursor
-            self.cache_cursor = (self.cache_cursor + 1) % self.n_cached_batches
+
+            if save_batch:
+                self.cache_cursor = (self.cache_cursor + 1) % self.n_cached_batches
+                if self.cache_cursor == 0 and not self.cache_full:
+                    print("Cache went through full rotation")
+                    self.cache_full = True
+
             return batch_idx
 
 
@@ -255,7 +262,8 @@ def bisect_right_lambda(a, x, key):
 # @profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
-                                   queued_output_groups: Optional[List[List[str]]], max_distance=1):
+                                   queued_output_groups: Optional[List[List[str]]], max_distance=1,
+                                   save_batch=True):
     if len(outputs) <= 1:
         return 0
 
@@ -266,8 +274,9 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
 
         start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
         if output_distance(outputs[-1], start_position) > max_distance:
-            insert_at = bisect_right_lambda(queued_output_groups, outputs[-1], lambda array_, idx_: array_[idx_][-1])
-            queued_output_groups.insert(insert_at, outputs)
+            # insert_at = bisect_right_lambda(queued_output_groups, outputs[-1], lambda array_, idx_: array_[idx_][-1])
+            # queued_output_groups.insert(insert_at, outputs)
+            queued_output_groups.append(outputs)
             return 0
 
     skipped = 0
@@ -277,7 +286,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
             address = cache.try_get_cached(txid_n, idx)
             if address is None:
                 try:
-                    address = cache.load_from_file(idx, txid_n)
+                    address = cache.load_from_file(idx, txid_n, save_batch)
                 except IndexError:
                     print("Skipped idx found:", txid_n)
                     skipped += 1
@@ -309,6 +318,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
                             address = cache.load_from_file(idx, txid_n)
                             if address is not None:
                                 address_group.add(address)
+                                break
                     except IndexError:
                         # This can happen when the address is "Unknown" (mistake?)
                         print("Skipped idx not found:", txid_n)
@@ -404,7 +414,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 if percentage_queue_to_max < 50:
                     percentage_queue_to_max = 0
                 else:
-                    percentage_queue_to_max = (percentage_queue_to_max - 40) * 0.1
+                    percentage_queue_to_max = ((percentage_queue_to_max - 40) * 0.1) ** 2
                 dynamic_distance = int(round(percentage_queue_to_max))
 
                 for tx, outputs, leftover in iterator:
@@ -445,28 +455,38 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     address_group = set([])
                     count_tx += 1
 
-                start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
                 n_queued = len(queued_output_groups)
-                for out_idx, queued_output_group in enumerate(queued_output_groups):
-                    if n_queued - len(to_remove_from_queue) < max_queue_size and \
-                            output_distance(queued_output_group[-1],
-                                            start_position) > dynamic_distance + start_distance:
-                        # we can break since they're sorted by largest, so all the following would be larger
-                        break
+                if cache.cache_full or n_queued > max_queue_size:
 
-                    # the "real" address group is still in use at this point, and we don't
-                    # want to pollute it, so we create this temporary one
-                    tmp_address_group = set([])
-                    skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
-                                                              output_address_iterator, cache, None)
-                    entity_grouping.update_from_address_group(list(tmp_address_group))
-                    to_remove_from_queue.append(out_idx)
-                    count_tx += 1
+                    print("sorting queue and trying to use it")
+                    queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
+                    print("sorted, trying to empty it")
 
-                for idx in reversed(to_remove_from_queue):
-                    # have to use reversed because suppose indexes are [1,2,3], once we remove item [1], the item [2,3]
-                    # will become [1,2]. Instead, if we remove [3] first, the position of [1] and [2] don't change
-                    queued_output_groups.pop(idx)
+                    start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
+
+                    for out_idx, queued_output_group in tqdm(enumerate(queued_output_groups), total=len(queued_output_groups), desc="Going through queue"):
+                        if n_queued - len(to_remove_from_queue) < max_queue_size and \
+                                output_distance(queued_output_group[-1],
+                                                start_position) > dynamic_distance:
+                            # we can break since they're sorted by largest, so all the following would be larger
+                            break
+
+                        # the "real" address group is still in use at this point, and we don't
+                        # want to pollute it, so we create this temporary one
+                        tmp_address_group = set([])
+                        skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
+                                                                  output_address_iterator, cache, None, save_batch=False)
+                        entity_grouping.update_from_address_group(list(tmp_address_group))
+                        to_remove_from_queue.append(out_idx)
+                        count_tx += 1
+
+                    for idx in reversed(to_remove_from_queue):
+                        # have to use reversed because suppose indexes are [1,2,3], once we remove item [1], the item [2,3]
+                        # will become [1,2]. Instead, if we remove [3] first, the position of [1] and [2] don't change
+                        queued_output_groups.pop(idx)
+
+                    cache.cache_full = False
+
 
                 # Statistics section
                 total_count_tx += count_tx
@@ -478,7 +498,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     "skipped": skipped,
                     "queue size": "{:.0f}".format(len(queued_output_groups)),
                     "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
-                    "max_distance": dynamic_distance
+                    "max_distance": dynamic_distance + start_distance
                 })
 
                 now = time.time()
@@ -497,12 +517,22 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 # tx_with_group.append(curr_tx)
 
             print("Emptying queue")
-            for queued_output_group in queued_output_groups:
+            queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
+            for queued_output_group in tqdm(queued_output_groups, unit="tx", desc="emptying queue"):
                 tmp_address_group = set([])
                 skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
-                                                          output_address_iterator, cache, None)
+                                                          output_address_iterator, cache, None, save_batch=False)
                 entity_grouping.update_from_address_group(list(tmp_address_group))
                 total_count_tx += 1
+
+                if total_count_tx % 100 == 0:
+                    bar.set_postfix({
+                        "entities": len(entity_grouping.entity_idx_to_addresses),
+                        "joined": entity_grouping.counter_joined_entities,
+                        "iteration": iteration,
+                        "skipped": skipped,
+                        "total_tx": total_count_tx
+                    })
 
         bar.set_postfix({
             "entities": len(entity_grouping.entity_idx_to_addresses),
