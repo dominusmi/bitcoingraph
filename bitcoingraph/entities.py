@@ -215,10 +215,12 @@ class EntityGrouping:
         self.counter_entities = 0
         self.counter_joined_entities = 0
 
+    @profile
     def update_from_address_group(self, addresses: List[str]):
-        found_entities_idx: Set[int] = set([])
         if len(addresses) <= 1:
             return
+
+        found_entities_idx: Set[int] = set([])
 
         for addr in addresses:
             entity_idx = self.address_to_entity_idx.get(addr, None)
@@ -240,8 +242,8 @@ class EntityGrouping:
 
             for addr in moved_addresses:
                 self.address_to_entity_idx[addr] = min_entity_idx
-                self.entity_idx_to_addresses[min_entity_idx].add(addr)
 
+            self.entity_idx_to_addresses[min_entity_idx].update(moved_addresses)
             self.counter_entities -= (len(found_entities_idx) - 1)
             self.counter_joined_entities += len(found_entities_idx) - 1
 

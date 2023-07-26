@@ -133,7 +133,7 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    # @profile
+    @profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False, save_batch=True):
         txid_n = batch[0][0]
 
@@ -160,7 +160,6 @@ class Cache:
             if save_batch:
                 self.cache_cursor = (self.cache_cursor + 1) % self.n_cached_batches
                 if self.cache_cursor == 0 and not self.cache_full:
-                    print("Cache went through full rotation")
                     self.cache_full = True
 
             return batch_idx
@@ -259,7 +258,7 @@ def bisect_right_lambda(a, x, key):
     return lo
 
 
-# @profile
+@profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=1,
@@ -326,8 +325,35 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
                         break
     return skipped
 
+@profile
+def process_queue(queued_output_groups: List[List[str]], entity_grouping: EntityGrouping, cache: Cache,
+                  output_address_iterator):
+    bar = tqdm(queued_output_groups, unit="tx")
+    bar.set_description("Sorting queue")
+    queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
+    bar.set_description("Processing queue")
+    for i, outputs in enumerate(bar):
+        address_group = set([])
+        fill_address_group_for_outputs(outputs, address_group,
+                                       output_address_iterator, cache,
+                                       None)
+        entity_grouping.update_from_address_group(list(address_group))
 
-# @profile
+        if i and i % 1000 == 0:
+            bar.set_postfix({
+                "entities": len(entity_grouping.entity_idx_to_addresses),
+                "max cached index": cache.cached_batches[cache.cache_cursor-1][0][0][:6]
+            })
+
+    return len(queued_output_groups)
+
+
+def queue_size(queued_output_groups: List[List[str]]) -> int:
+    # size of outer List + size of inner List
+    return len(queued_output_groups) * (8+64) + (8+68+64) * len(queued_output_groups)
+
+
+@profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str], max_queue_size: int, start_distance: int):
     print("Preparing cache")
@@ -357,28 +383,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             skipped = 0
             total_count_tx = 0
 
-            # INDEXING
-            # indexing_path = pathlib.Path().resolve().joinpath(f"indexing_{tot}_{chunk_size}.pickle")
-            # if indexing_path.exists():
-            #     print("Loading existing index file")
-            #     with open(indexing_path, "rb") as f_pickle:
-            #         data = pickle.load(f_pickle)
-            #         cache.lookup_cursor = data["lookup_cursor"]
-            #         cache.lookup_keys = data["lookup_keys"]
-            #         cache.lookup_table = data["lookup_table"]
-            # else:
-            #     print("Indexing rel_output_address.csv")
-            #     with open(input_path.joinpath('rel_output_address.csv'), 'rb') as tmp:
-            #         output_address_iterator = read_csv_in_chunks(tmp, chunk_size, read_size)
-            #         cache.load_indexes(output_address_iterator)
-            #         with open(indexing_path,
-            #                   "wb+") as f_pickle:
-            #             pickle.dump({
-            #                 "lookup_cursor": cache.lookup_cursor,
-            #                 "lookup_keys": cache.lookup_keys,
-            #                 "lookup_table": cache.lookup_table
-            #             }, f_pickle)
-
             if tot is not None:
                 bar = tqdm(total=tot, unit='tx', mininterval=1, smoothing=0.1)
             else:
@@ -390,32 +394,14 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             print("Starting main loop")
             interchunk_transaction_group = None
-            for input_batch, _ in read_csv_in_chunks(f_rel_input, 100000, max(read_size, 100000)):
+            for input_batch, _ in read_csv_in_chunks(f_rel_input, 5_000_000, max(read_size, 1_000_000_000)):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
-                # Resume from previous state if necessary
-                if not resumed:
-                    outputs = resume_iterator(curr_tx, iterator)
-                    if outputs is not None:
-                        # We need to process the outputs found for the tx to make sure we don't lose out on an
-                        # entity that was in between the current input_batch and the following.
-                        fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
-                                                       queued_output_groups)
-
-                        resumed = True
-                        print(f"Resumed from {curr_tx}")
-                    else:
-                        iteration += 1
-                        continue
-
-                to_remove_from_queue = []
-                percentage_queue_to_max = len(queued_output_groups) / max_queue_size * 100
-                if percentage_queue_to_max < 50:
-                    percentage_queue_to_max = 0
-                else:
-                    percentage_queue_to_max = ((percentage_queue_to_max - 40) * 0.1) ** 2
-                dynamic_distance = int(round(percentage_queue_to_max))
+                if queue_size(queued_output_groups) > max_queue_size:
+                    processed = process_queue(queued_output_groups, entity_grouping, cache, output_address_iterator)
+                    count_tx += processed
+                    queued_output_groups = []
 
                 for tx, outputs, leftover in iterator:
                     # if interchunk_transaction_group is not None and leftover:
@@ -427,14 +413,7 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         # We need to do this because a transaction group may be
                         # split into multiple returned batches
                         if interchunk_transaction_group[0] != tx:
-                            skipped += fill_address_group_for_outputs(interchunk_transaction_group[1], address_group,
-                                                                      output_address_iterator, cache,
-                                                                      queued_output_groups,
-                                                                      max_distance=start_distance + dynamic_distance)
-                            entity_grouping.update_from_address_group(list(address_group))
-                            address_group = set([])
-                            curr_tx = tx
-                            count_tx += 1
+                            queued_output_groups.append(outputs)
                         else:
                             outputs.extend(interchunk_transaction_group[1])
 
@@ -448,48 +427,10 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                         count_tx += 1
                         continue
 
-                    skipped += fill_address_group_for_outputs(outputs, address_group, output_address_iterator, cache,
-                                                              queued_output_groups,
-                                                              max_distance=start_distance + dynamic_distance)
-                    entity_grouping.update_from_address_group(list(address_group))
-                    address_group = set([])
-                    count_tx += 1
-
-                n_queued = len(queued_output_groups)
-                if cache.cache_full or n_queued > max_queue_size:
-
-                    print("sorting queue and trying to use it")
-                    queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
-                    print("sorted, trying to empty it")
-
-                    start_position = cache.lookup_keys[cache.lookup_cursor - 1] if cache.lookup_cursor > 0 else '0'
-
-                    for out_idx, queued_output_group in tqdm(enumerate(queued_output_groups), total=len(queued_output_groups), desc="Going through queue"):
-                        if n_queued - len(to_remove_from_queue) < max_queue_size and \
-                                output_distance(queued_output_group[-1],
-                                                start_position) > dynamic_distance:
-                            # we can break since they're sorted by largest, so all the following would be larger
-                            break
-
-                        # the "real" address group is still in use at this point, and we don't
-                        # want to pollute it, so we create this temporary one
-                        tmp_address_group = set([])
-                        skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
-                                                                  output_address_iterator, cache, None, save_batch=False)
-                        entity_grouping.update_from_address_group(list(tmp_address_group))
-                        to_remove_from_queue.append(out_idx)
-                        count_tx += 1
-
-                    for idx in reversed(to_remove_from_queue):
-                        # have to use reversed because suppose indexes are [1,2,3], once we remove item [1], the item [2,3]
-                        # will become [1,2]. Instead, if we remove [3] first, the position of [1] and [2] don't change
-                        queued_output_groups.pop(idx)
-
-                    cache.cache_full = False
-
+                    outputs.sort()
+                    queued_output_groups.append(outputs)
 
                 # Statistics section
-                total_count_tx += count_tx
                 bar.update(count_tx)
                 bar.set_postfix({
                     "entities": len(entity_grouping.entity_idx_to_addresses),
@@ -498,41 +439,24 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     "skipped": skipped,
                     "queue size": "{:.0f}".format(len(queued_output_groups)),
                     "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
-                    "max_distance": dynamic_distance + start_distance
+                    "max_distance": start_distance
                 })
 
-                now = time.time()
-                if now - previous_time > 600:
-                    print("Dumping state")
-                    previous_time = time.time()
-                    with open(f"compute_entities_{curr_tx}_{datetime.datetime.utcnow().isoformat()[:-7]}", "wb+") as f:
-                        pickle.dump({
-                            "grouping": entity_grouping,
-                            "tx": curr_tx
-                        }, f)
+                total_count_tx += count_tx
                 iteration += 1
 
             if len(address_group) > 1:
                 entity_grouping.update_from_address_group(list(address_group))
                 # tx_with_group.append(curr_tx)
 
-            print("Emptying queue")
-            queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
-            for queued_output_group in tqdm(queued_output_groups, unit="tx", desc="emptying queue"):
-                tmp_address_group = set([])
-                skipped += fill_address_group_for_outputs(queued_output_group, tmp_address_group,
-                                                          output_address_iterator, cache, None, save_batch=False)
-                entity_grouping.update_from_address_group(list(tmp_address_group))
-                total_count_tx += 1
-
-                if total_count_tx % 100 == 0:
-                    bar.set_postfix({
-                        "entities": len(entity_grouping.entity_idx_to_addresses),
-                        "joined": entity_grouping.counter_joined_entities,
-                        "iteration": iteration,
-                        "skipped": skipped,
-                        "total_tx": total_count_tx
-                    })
+            if queued_output_groups:
+                print("Sort queue")
+                queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
+                print("Process queue")
+                processed = process_queue(queued_output_groups, entity_grouping, cache, output_address_iterator)
+                count_tx += processed
+                queued_output_groups = []
+                print("Finished")
 
         bar.set_postfix({
             "entities": len(entity_grouping.entity_idx_to_addresses),
