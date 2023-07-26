@@ -215,7 +215,7 @@ class EntityGrouping:
         self.counter_entities = 0
         self.counter_joined_entities = 0
 
-    @profile
+    # @profile
     def update_from_address_group(self, addresses: List[str]):
         if len(addresses) <= 1:
             return
