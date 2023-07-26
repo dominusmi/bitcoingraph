@@ -133,7 +133,7 @@ class Cache:
         if x[0] == txid_n:
             return x[1]
 
-    @profile
+    #@profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False, save_batch=True):
         txid_n = batch[0][0]
 
@@ -258,7 +258,7 @@ def bisect_right_lambda(a, x, key):
     return lo
 
 
-@profile
+#@profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
                                    cache: Cache,
                                    queued_output_groups: Optional[List[List[str]]], max_distance=1,
@@ -325,7 +325,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
                         break
     return skipped
 
-@profile
+#@profile
 def process_queue(queued_output_groups: List[List[str]], entity_grouping: EntityGrouping, cache: Cache,
                   output_address_iterator):
     bar = tqdm(queued_output_groups, unit="tx")
@@ -353,7 +353,7 @@ def queue_size(queued_output_groups: List[List[str]]) -> int:
     return len(queued_output_groups) * (8+64) + (8+68+64) * len(queued_output_groups)
 
 
-@profile
+#@profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str], max_queue_size: int, start_distance: int):
     print("Preparing cache")
