@@ -350,7 +350,7 @@ def process_queue(queued_output_groups: List[List[str]], entity_grouping: Entity
 
 def queue_size(queued_output_groups: List[List[str]]) -> int:
     # size of outer List + size of inner List
-    return len(queued_output_groups) * (8+64) + (8+68+64) * len(queued_output_groups)
+    return len(queued_output_groups) * (8+64) + (8+68+64) * len(queued_output_groups) * 3
 
 
 #@profile
