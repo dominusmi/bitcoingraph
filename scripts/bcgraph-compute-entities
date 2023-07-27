@@ -265,7 +265,7 @@ def get_address_of_output(txid_n: str, cache: Cache, output_address_iterator):
             try:
                 address = cache.load_from_file(idx, txid_n)
             except IndexError:
-                print("Skipped idx found:", txid_n)
+                # print("Skipped idx found:", txid_n)
                 # Can happen when the address was invalid (I suppose due to
                 # human error in the transaction)
                 return None
@@ -294,7 +294,7 @@ def get_address_of_output(txid_n: str, cache: Cache, output_address_iterator):
                             return address
                 except IndexError:
                     # This can happen when the address is "Unknown" (mistake?)
-                    print("Skipped idx not found:", txid_n)
+                    # print("Skipped idx not found:", txid_n)
                     return None
 
 
@@ -314,7 +314,7 @@ def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set
     return skipped
 
 
-def flatten_and_sort_with_index(input_list):
+def flatten_and_sort_with_index(input_list, bar=None):
     # Step 1: Flatten the list of lists
     flattened_list = [item for sublist in input_list for item in sublist]
 
@@ -345,14 +345,18 @@ def group_back_with_index(sorted_list, sorted_index_list):
 
     return grouped_values
 
+
 # @profile
 def process_queue(queued_output_groups: List[List[str]], cache: Cache,
                   output_address_iterator, input_path):
     entity_grouping = EntityGrouping()
 
-    print("Sorting queue")
+    bar = tqdm(desc="Sorting queue")
+    start = time.time_ns()
     queued_output_groups, original_output_idx = flatten_and_sort_with_index(queued_output_groups)
-
+    tot = (time.time_ns() - start) / 1e9
+    bar.set_postfix({"Time taken": "{:.2f}s".format(tot)})
+    bar.close()
     # queued_output_groups = sorted(queued_output_groups, key=lambda x: int(x[-1][:5], 16))
     bar = tqdm(queued_output_groups, unit="tx", smoothing=0.1, maxinterval=None)
     # queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
@@ -360,8 +364,13 @@ def process_queue(queued_output_groups: List[List[str]], cache: Cache,
 
     last_empty = 0
     original_output_idx_to_address = [None] * len(original_output_idx)
+    skipped = 0
+    skipped_outputs = []
     for i, output in enumerate(bar):
         address = get_address_of_output(output, cache, output_address_iterator)
+        if address is None:
+            skipped += 1
+            skipped_outputs.append(output)
         original_output_idx_to_address[i] = address
 
         if i and i % 1000 == 0:
@@ -370,16 +379,20 @@ def process_queue(queued_output_groups: List[List[str]], cache: Cache,
                 # "joined": entity_grouping.counter_joined_entities,
                 "max cached index": cache.cached_batches[cache.cache_cursor - 1][0][0][:6],
                 "cache cursor": cache.cache_cursor,
-                "lookup size": len(cache.lookup_table)
+                "lookup size": len(cache.lookup_table),
+                "skipped": skipped
             })
 
-    print("Grouping back")
-    grouped = group_back_with_index(original_output_idx_to_address, original_output_idx)
+    with open(input_path.joinpath("skipped.csv"), "a+") as f_skipped:
+        f_skipped.write("\n".join(skipped_outputs) + "\n")
 
-    for (idx, addresses) in tqdm(grouped.items(), desc="Forming entities", total=len(grouped)):
+    bar.set_description("Grouping outputs back")
+    grouped = group_back_with_index(original_output_idx_to_address, original_output_idx)
+    bar.close()
+
+    for (idx, addresses) in tqdm(grouped.items(), desc="Forming entities", total=len(grouped), position=3):
         entity_grouping.update_from_address_group(addresses)
-        if entity_grouping.entity_idx_counter > last_empty + 200_000:
-            print("Saving current entities")
+        if entity_grouping.entity_idx_counter > last_empty + 400_000:
             save_entities(entity_grouping.entity_idx_to_addresses, input_path)
             counter = entity_grouping.entity_idx_counter
             joined = entity_grouping.counter_joined_entities
@@ -388,7 +401,6 @@ def process_queue(queued_output_groups: List[List[str]], cache: Cache,
             entity_grouping.entity_idx_counter = counter
             entity_grouping.counter_joined_entities = joined
             last_empty = counter
-            print("Done")
 
     save_entities(entity_grouping.entity_idx_to_addresses, input_path)
     return len(queued_output_groups)
@@ -434,6 +446,21 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
         #     entity_grouping = state_data["grouping"]
         #     curr_tx = state_data["tx"]
 
+    with open(input_path.joinpath("skipped.csv"), "w+") as _:
+        pass
+
+    with open(input_path.joinpath("checkpoint.csv"), "w+") as _:
+        pass
+
+    if os.path.getsize(input_path.joinpath("rel_entity_address.csv")) > 100_000:
+        r = input(
+            "The output file rel_entity_address.csv already exists, are you sure you want to overwrite it? [y/n]\n")
+        if r.strip() != "y":
+            print("Stopping process")
+            exit(0)
+        with open(input_path.joinpath("rel_entity_address.csv"), "w+") as _:
+            pass
+
     with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
         header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
 
@@ -449,26 +476,28 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             skipped = 0
             total_count_tx = 0
 
+            kwargs = {"unit": 'tx', "mininterval": 1, "smoothing": 0.1, "desc": "Loading queue", "maxinterval": None}
             if tot is not None:
-                bar = tqdm(total=tot, unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue", maxinterval=None)
-            else:
-                bar = tqdm(unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue", maxinterval=None)
+                kwargs["total"] = tot
+            bar = tqdm(**kwargs)
 
             output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size, read_size)
 
             queued_output_groups = []
 
-            print("Starting main loop")
             interchunk_transaction_group = None
             for input_batch, _ in read_csv_in_chunks(f_rel_input, 5_000_000, max(read_size, 1_000_000_000)):
                 count_tx = 0
                 iterator = iterate_grouped_outputs(input_batch)
 
                 if queue_size(queued_output_groups) > max_queue_size:
+                    bar.close()
+                    with open(input_path.joinpath("checkpoint.csv"), "a+") as f_checkpoint:
+                        f_checkpoint.write(f"{len(queued_output_groups)}\n")
                     processed = process_queue(queued_output_groups, cache, output_address_iterator, input_path)
                     count_tx += processed
                     queued_output_groups = []
-
+                    bar = tqdm(position=bar.pos, **kwargs)
                 for tx, outputs, leftover in iterator:
                     # if interchunk_transaction_group is not None and leftover:
                     #     if tx == interchunk_transaction_group[0]:
