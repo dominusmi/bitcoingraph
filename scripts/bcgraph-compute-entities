@@ -499,13 +499,13 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 # Statistics section
                 bar.update(count_tx)
                 bar.set_postfix({
-                    "entities": len(entity_grouping.entity_idx_to_addresses),
-                    "joined": entity_grouping.counter_joined_entities,
+                    # "entities": len(entity_grouping.entity_idx_to_addresses),
+                    # "joined": entity_grouping.counter_joined_entities,
                     "iteration": iteration,
-                    "skipped": skipped,
-                    "queue size": "{:.0f}".format(len(queued_output_groups)),
-                    "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
-                    "max_distance": start_distance
+                    # "skipped": skipped,
+                    "queue size": "{:.0f}".format(queue_size(queued_output_groups)),
+                    # "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
+                    # "max_distance": start_distance
                 })
 
                 total_count_tx += count_tx
