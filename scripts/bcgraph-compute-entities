@@ -103,14 +103,14 @@ class Cache:
 
         return result - 1
 
-    #@profile
+    # @profile
     def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
         cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
         if cache_idx is not None:
             return self.find_cached_address(cache_idx, txid_n)
         return None
 
-    #@profile
+    # @profile
     def load_from_file(self, lookup_index: int, txid_n: str, save_batch=True):
         tell = self.lookup_table[lookup_index]
         self.file.seek(tell)
@@ -124,7 +124,7 @@ class Cache:
             raise IndexError("load_from_file should always find the address")
         return address
 
-    #@profile
+    # @profile
     def find_cached_address(self, cache_idx: int, txid_n: str) -> Optional[str]:
         idx = bisect_right_lambda(self.cached_batches[cache_idx], txid_n, lambda arr_, idx_: arr_[idx_][0])
         x = self.cached_batches[cache_idx][idx - 1]
@@ -132,7 +132,7 @@ class Cache:
             return x[1]
         return None
 
-    #@profile
+    # @profile
     def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False, save_batch=True):
         txid_n = batch[0][0]
 
@@ -257,105 +257,138 @@ def bisect_right_lambda(a, x, key):
     return lo
 
 
-#@profile
+def get_address_of_output(txid_n: str, cache: Cache, output_address_iterator):
+    idx = cache.get_lookup_index(txid_n)
+    if idx is not None:
+        address = cache.try_get_cached(txid_n, idx)
+        if address is None:
+            try:
+                address = cache.load_from_file(idx, txid_n)
+            except IndexError:
+                print("Skipped idx found:", txid_n)
+                # Can happen when the address was invalid (I suppose due to
+                # human error in the transaction)
+                return None
+        return address
+    else:
+        # try to get from latest cache
+        if cache.lookup_cursor > 0:
+            tried_lookup = cache.lookup_cursor - 1
+            address = cache.try_get_cached(txid_n, tried_lookup)
+            if address is not None:
+                return address
+
+        for batch, cursor in output_address_iterator:
+            batch_idx = cache.load_batch(batch, cursor)
+            if batch[0][0] <= txid_n <= batch[-1][0]:
+                address = cache.find_cached_address(batch_idx, txid_n)
+                if address is not None:
+                    return address
+            if txid_n < batch[0][0]:
+                # Last chance, we try to get it from file now
+                try:
+                    idx = cache.get_lookup_index(txid_n)
+                    if idx:
+                        address = cache.load_from_file(idx, txid_n)
+                        if address is not None:
+                            return address
+                except IndexError:
+                    # This can happen when the address is "Unknown" (mistake?)
+                    print("Skipped idx not found:", txid_n)
+                    return None
+
+
+# @profile
 def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
-                                   cache: Cache,
-                                   queued_output_groups: Optional[List[List[str]]], max_distance=1,
-                                   save_batch=True):
+                                   cache: Cache):
     if len(outputs) <= 1:
         return 0
 
-
     skipped = 0
     for txid_n in outputs:
-        idx = cache.get_lookup_index(txid_n)
-        if idx is not None:
-            address = cache.try_get_cached(txid_n, idx)
-            if address is None:
-                try:
-                    address = cache.load_from_file(idx, txid_n, save_batch)
-                except IndexError:
-                    print("Skipped idx found:", txid_n)
-                    skipped += 1
-                    # Can happen when the address was invalid (I suppose due to
-                    # human error in the transaction)
-                    continue
+        address = get_address_of_output(txid_n, cache, output_address_iterator)
+        if address is not None:
             address_group.add(address)
         else:
-            # try to get from latest cache
-            if cache.lookup_cursor > 0:
-                tried_lookup = cache.lookup_cursor - 1
-                address = cache.try_get_cached(txid_n, tried_lookup)
-                if address is not None:
-                    address_group.add(address)
-                    continue
-
-            for batch, cursor in output_address_iterator:
-                batch_idx = cache.load_batch(batch, cursor)
-                if batch[0][0] <= txid_n <= batch[-1][0]:
-                    address = cache.find_cached_address(batch_idx, txid_n)
-                    if address is not None:
-                        address_group.add(address)
-                        break
-                if txid_n < batch[0][0]:
-                    # Last chance, we try to get it from file now
-                    try:
-                        idx = cache.get_lookup_index(txid_n)
-                        if idx:
-                            address = cache.load_from_file(idx, txid_n)
-                            if address is not None:
-                                address_group.add(address)
-                                break
-                    except IndexError:
-                        # This can happen when the address is "Unknown" (mistake?)
-                        print("Skipped idx not found:", txid_n)
-                        skipped += 1
-                        break
+            skipped += 1
     return skipped
 
 
-#@profile
+def flatten_and_sort_with_index(input_list):
+    # Step 1: Flatten the list of lists
+    flattened_list = [item for sublist in input_list for item in sublist]
+
+    # Step 2: Create a list of grouping indices
+    index_list = [i for i, sublist in enumerate(input_list) for _ in range(len(sublist))]
+
+    # Step 3: Sort the flattened list
+    sorted_list_with_index = sorted(zip(flattened_list, index_list), key=lambda x: int(x[0][:12], 16))
+
+    # Step 4: Extract the sorted list and the sorted index list
+    sorted_list, sorted_index_list = zip(*sorted_list_with_index)
+
+    return sorted_list, sorted_index_list
+
+
+def group_back_with_index(sorted_list, sorted_index_list):
+    # Combine the sorted list and the index list into pairs
+    combined_list = list(zip(sorted_list, sorted_index_list))
+
+    # Create a dictionary to group the values based on their index
+    grouped_values = {}
+    for value, index in combined_list:
+        if value is None:
+            continue
+        if index not in grouped_values:
+            grouped_values[index] = []
+        grouped_values[index].append(value)
+
+    return grouped_values
+
+# @profile
 def process_queue(queued_output_groups: List[List[str]], cache: Cache,
                   output_address_iterator, input_path):
-
     entity_grouping = EntityGrouping()
+
     print("Sorting queue")
-    queued_output_groups = sorted(queued_output_groups, key=lambda x: int(x[-1][:5], 16))
-    bar = tqdm(queued_output_groups, unit="tx", smoothing=0.1)
+    queued_output_groups, original_output_idx = flatten_and_sort_with_index(queued_output_groups)
+
+    # queued_output_groups = sorted(queued_output_groups, key=lambda x: int(x[-1][:5], 16))
+    bar = tqdm(queued_output_groups, unit="tx", smoothing=0.1, maxinterval=None)
     # queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
     bar.set_description("Processing queue")
 
-    time_finding_address = 0
-    time_grouping = 0
     last_empty = 0
-    for i, outputs in enumerate(bar):
-        address_group = set([])
-        fill_address_group_for_outputs(outputs, address_group,
-                                       output_address_iterator, cache,
-                                       None)
-
-        entity_grouping.update_from_address_group(list(address_group))
+    original_output_idx_to_address = [None] * len(original_output_idx)
+    for i, output in enumerate(bar):
+        address = get_address_of_output(output, cache, output_address_iterator)
+        original_output_idx_to_address[i] = address
 
         if i and i % 1000 == 0:
             bar.set_postfix({
-                "entities": entity_grouping.entity_idx_counter,
-                "joined": entity_grouping.counter_joined_entities,
+                # "entities": entity_grouping.entity_idx_counter,
+                # "joined": entity_grouping.counter_joined_entities,
                 "max cached index": cache.cached_batches[cache.cache_cursor - 1][0][0][:6],
                 "cache cursor": cache.cache_cursor,
                 "lookup size": len(cache.lookup_table)
             })
 
-            if entity_grouping.entity_idx_counter > last_empty + 100_000:
-                print("Saving current entities")
-                save_entities(entity_grouping.entity_idx_to_addresses, input_path)
-                counter = entity_grouping.entity_idx_counter
-                joined = entity_grouping.counter_joined_entities
+    print("Grouping back")
+    grouped = group_back_with_index(original_output_idx_to_address, original_output_idx)
 
-                entity_grouping = EntityGrouping()
-                entity_grouping.entity_idx_counter = counter
-                entity_grouping.counter_joined_entities = joined
-                last_empty = counter
-                print("Done")
+    for (idx, addresses) in tqdm(grouped.items(), desc="Forming entities", total=len(grouped)):
+        entity_grouping.update_from_address_group(addresses)
+        if entity_grouping.entity_idx_counter > last_empty + 200_000:
+            print("Saving current entities")
+            save_entities(entity_grouping.entity_idx_to_addresses, input_path)
+            counter = entity_grouping.entity_idx_counter
+            joined = entity_grouping.counter_joined_entities
+
+            entity_grouping = EntityGrouping()
+            entity_grouping.entity_idx_counter = counter
+            entity_grouping.counter_joined_entities = joined
+            last_empty = counter
+            print("Done")
 
     save_entities(entity_grouping.entity_idx_to_addresses, input_path)
     return len(queued_output_groups)
@@ -367,30 +400,24 @@ def queue_size(queued_output_groups: List[List[str]]) -> int:
 
 
 def save_entities(entity_idx_to_addresses: typing.Dict[int, typing.Set[str]], input_path: Path):
-    with open(input_path.joinpath("entity.csv"), "a+") as entity_f:
-        with open(input_path.joinpath(f"rel_entity_address.csv"), "a+") as relationships_csv:
+    with open(input_path.joinpath(f"rel_entity_address.csv"), "a+") as relationships_csv:
 
-            entity_buffer = ""
-            rel_buffer = ""
-            for entity_id, addresses in entity_idx_to_addresses.items():
-                if addresses is None:
-                    continue
-                entity_buffer += f"{entity_id}\n"
-                if len(entity_buffer) > 10_000_000:
-                    entity_f.write(entity_buffer)
+        rel_buffer = ""
+        for entity_id, addresses in entity_idx_to_addresses.items():
+            if addresses is None:
+                continue
 
-                rel_buffer += "".join([f"{entity_id},{a}\n" for a in addresses if a is not None])
+            rel_buffer += "".join([f"{entity_id},{a}\n" for a in addresses if a is not None])
 
-                # write the buffer in chunks of 1MB
-                if len(rel_buffer) > 1_000_000:
-                    relationships_csv.write(rel_buffer)
-                    rel_buffer = ""
+            # write the buffer in chunks of 1MB
+            if len(rel_buffer) > 1_000_000:
+                relationships_csv.write(rel_buffer)
+                rel_buffer = ""
 
-            entity_f.write(entity_buffer)
-            relationships_csv.write(rel_buffer)
+        relationships_csv.write(rel_buffer)
 
 
-#@profile
+# @profile
 def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
             resume: Optional[str], max_queue_size: int, start_distance: int):
     print("Preparing cache")
@@ -413,7 +440,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     with open(input_path.joinpath("entity_header.csv"), "w+") as header:
         header.writelines(["entity_id:ID(Entity)"])
 
-
     try:
         with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
                 input_path.joinpath('rel_output_address.csv'), 'rb') as f_rel_output_address:
@@ -424,9 +450,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             total_count_tx = 0
 
             if tot is not None:
-                bar = tqdm(total=tot, unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue")
+                bar = tqdm(total=tot, unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue", maxinterval=None)
             else:
-                bar = tqdm(unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue")
+                bar = tqdm(unit='tx', mininterval=1, smoothing=0.1, desc="Loading queue", maxinterval=None)
 
             output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size, read_size)
 
@@ -508,7 +534,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
             }, f)
     finally:
         print("Saving files")
-        save_entities({k: v for k,v in enumerate(entity_grouping.entity_idx_to_addresses) if v is not None}, input_path)
+        save_entities({k: v for k, v in enumerate(entity_grouping.entity_idx_to_addresses) if v is not None},
+                      input_path)
 
 
 if __name__ == "__main__":
