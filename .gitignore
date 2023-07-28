@@ -51,3 +51,4 @@ docs/_build/
 # Test log
 /testlog.log
 /venv_cpython/
+/scripts/merge-entities/target/
