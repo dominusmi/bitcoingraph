@@ -358,7 +358,7 @@ def process_queue(queued_output_groups: List[List[str]], cache: Cache,
     bar.set_postfix({"Time taken": "{:.2f}s".format(tot)})
     bar.close()
     # queued_output_groups = sorted(queued_output_groups, key=lambda x: int(x[-1][:5], 16))
-    bar = tqdm(queued_output_groups, unit="tx", smoothing=0.1, maxinterval=None)
+    bar = tqdm(queued_output_groups, unit="output", smoothing=0.1, maxinterval=None)
     # queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
     bar.set_description("Processing queue")
 
@@ -497,7 +497,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     processed = process_queue(queued_output_groups, cache, output_address_iterator, input_path)
                     count_tx += processed
                     queued_output_groups = []
-                    bar = tqdm(position=bar.pos, **kwargs)
+                    bar = tqdm(**kwargs)
+                    bar.update(total_count_tx)
+
                 for tx, outputs, leftover in iterator:
                     # if interchunk_transaction_group is not None and leftover:
                     #     if tx == interchunk_transaction_group[0]:
