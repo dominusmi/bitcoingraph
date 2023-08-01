@@ -103,6 +103,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Wrote {:?} lines in {:?} seconds", &idx, &start_write.elapsed().as_secs());
         }
     }
+    writer.flush()?;
 
     // Create a HashSet to store the unique values
     let mut unique_entity_idx: HashSet<usize> = HashSet::new();
