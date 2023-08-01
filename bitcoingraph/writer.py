@@ -12,9 +12,9 @@ class CSVDumpWriter:
         if not os.path.exists(output_path):
             os.makedirs(output_path)
 
-        self._write_header('blocks', ['hash:ID(Block)', 'height:int', 'timestamp:int', 'difficulty:double'])
+        self._write_header('blocks', ['hash:ID(Block)', 'height:long', 'timestamp:long', 'difficulty:double'])
         self._write_header('transactions', ['txid:ID(Transaction)', 'coinbase:boolean'])
-        self._write_header('outputs', ['txid_n:ID(Output)', 'n:int', 'value:double', 'type'])
+        self._write_header('outputs', ['txid_n:ID(Output)', 'n:long', 'value:double', 'type'])
         self._write_header('addresses', ['address:ID(Address)'])
         self._write_header('rel_block_tx', ['hash:START_ID(Block)', 'txid:END_ID(Transaction)'])
         self._write_header('rel_block_block', ['hash:START_ID(Block)', 'prevblockhash:END_ID(Block)'])
