@@ -1,9 +1,11 @@
 #!/usr/bin/env python
+
 import argparse
 import datetime
 import pathlib
 import sys
-
+import os
+import shutil
 from bitcoinlib.keys import Key
 
 parser = argparse.ArgumentParser(
@@ -56,7 +58,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     batch_size = args.batch_size
     path = pathlib.Path(args.input_path)
-    hashes = set([])
 
     with open(path.joinpath("rel_address_address_header.csv"), "w+") as f:
         f.write("pk:START_ID(Address),address:END_ID(Address)\n")
@@ -64,10 +65,16 @@ if __name__ == "__main__":
     print("Starting..")
     chunk_size = args.read_size
     started_processing_pk = False
-    with open(path.joinpath("addresses.csv"), "r") as f:
+
+    # Since we need to append to rel_address_address.csv within this run,
+    # we must first remove any leftovers from a previous run.
+    if os.path.isfile(path.joinpath("rel_address_address.csv")):
+        os.remove(path.joinpath("rel_address_address.csv"))
+
+    with open(path.joinpath("addresses.csv"), "r") as fa:
         # instead of writing every relationship one at a time, we write them in batches
         batch_write = []
-        for line_number, line in enumerate(line_reader(f, chunk_size)):
+        for line_number, line in enumerate(line_reader(fa, chunk_size)):
             if line.startswith("pk_"):
                 if line.endswith("CHECKSIG"):
                     pk = line[3:-12]
@@ -85,15 +92,10 @@ if __name__ == "__main__":
                     continue
 
                 p2pkh = get_p2pkh(key)
-                if p2pkh in hashes:
-                    batch_write.append(f"{line},{p2pkh}")
-                    continue
+                batch_write.append(f"{line},{p2pkh}")
 
                 p2wpkh = get_p2wpkh(key)
-                if p2wpkh in hashes:
-                    batch_write.append(f"{line},{p2wpkh}")
-            else:
-                hashes.add(line)
+                batch_write.append(f"{line},{p2wpkh}")
 
             if line_number and batch_write and line_number % batch_size == 0:
                 date = datetime.datetime.utcnow()
@@ -105,3 +107,37 @@ if __name__ == "__main__":
         if batch_write:
             with open(path.joinpath("rel_address_address.csv"), "a") as output:
                 output.write("\n".join(batch_write) + "\n")
+    fa.close()
+
+    pkh_addresses = []
+    pk_lines = 0
+    print("Reading pk2pkh addresses")
+    with open(path.joinpath("rel_address_address.csv"), "r") as fr:
+        for line_number, line in enumerate(line_reader(fr, chunk_size)):
+            address = line.rsplit(",", 1)[-1] + "\n"
+            pkh_addresses.append(address)
+            pk_lines += 1
+    fr.close()
+
+    print("Writing pk2pkh addresses")
+    with open(path.joinpath("pk2addresses.csv"), "w") as pka:
+        pka.writelines(pkh_addresses)
+    pka.close()
+
+    print("Appending pk2pkh addresses to addresses")
+    addrfiles = [path.joinpath("addresses.csv"), path.joinpath("pk2addresses.csv")]
+    with open(path.joinpath("new_addresses.csv"), "wb") as ba:
+        for af in addrfiles:
+            with open(af,'rb') as fd:
+                shutil.copyfileobj(fd, ba)
+
+    # Sanity check and completion
+    # print("pklines: " + str(pklines)  + " addresslines: " + str(addresses))
+    # if not addresses.csv lines + pk2addresses.csv lines == new_addresses.csv lines:
+    #    break
+    # else
+    #    sort unique new_addresses.csv
+    #    overwrite addresses.csv with new_addresses.csv
+    #    print completion message and a copy/paste neo4j CSV import command.
+
+    # Do all this manually for now.
