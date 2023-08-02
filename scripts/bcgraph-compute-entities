@@ -22,26 +22,18 @@ parser = argparse.ArgumentParser(
     description='Compute entities from exported block chain data')
 parser.add_argument('-i', '--input_path', required=True,
                     help='Input path')
-parser.add_argument('--sort-input', action='store_true',
-                    help='Sort the rel_input.csv. This should already be done in the export except if you used '
-                         'non-default arguments')
 parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
-parser.add_argument('--chunk-size', type=int, default=1024 * 100,
-                    help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
-parser.add_argument('--read-size', type=int, default=102400,
-                    help='Size of chunk read at a time from file, also batch-size (to be improved) in bytes')
-parser.add_argument('--cached-batches', type=int, default=10000,
-                    help='Number of batches to keep in memory. Compute estimated memory as chunk-size x this')
-parser.add_argument('--tot', type=int, default=None,
-                    help='Total number of transactions, for progress bar')
-parser.add_argument('--resume', type=str, default=None,
-                    help='Pickle file to resume processing from')
-parser.add_argument('--max-queue-size', type=int, default=10_000_000,
-                    help='As the file is read, if an output is "too far away", it\'s kept in the queue. Make this large for better performance')
-parser.add_argument('--start-distance', type=int, default=1,
-                    help="If an output is further than this distance, put it in the queue. Should be kept low.")
+parser.add_argument('--chunk-size', type=int, default=10_000,
+                    help='Size of each "batch". Smaller batch are better up to some extent. Should aim for around 10KB but can be tuned as needed')
+parser.add_argument('--read-size', type=int, default=10_000_000,
+                    help='Size to read at at a time from file in bytes. Typical value about 10MB')
+parser.add_argument('--cached-batches', type=int, default=5_000,
+                    help='Number of latest processed batches to keep in memory. About 5000 is good')
+parser.add_argument('--max-queue-size', type=int, default=1_000_000_000,
+                    help='Most important variable for both performance and memory. The higher the better. '
+                         'This is proportional to the memory usage. 5_000_000_000 is about 60G of max RAM used.')
 
 
 class Cache:
@@ -222,14 +214,6 @@ def iterate_grouped_outputs(batch):
 
     if current_group:
         yield current_tx, current_group, True
-
-
-def resume_iterator(curr_tx, iterator):
-    for tx, outputs in iterator:
-        if tx == curr_tx:
-            return outputs
-    return None
-
 
 def output_distance(out1, out2):
     return int(out1[:4], 16) - int(out2[:4], 16)
@@ -430,21 +414,13 @@ def save_entities(entity_idx_to_addresses: typing.Dict[int, typing.Set[str]], in
 
 
 # @profile
-def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
-            resume: Optional[str], max_queue_size: int, start_distance: int):
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int, max_queue_size: int):
     print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size,
                   path_to_output_address=input_path.joinpath('rel_output_address.csv'))
     print("Cache ready")
 
     entity_grouping = EntityGrouping()
-    if resume is not None:
-        print("WARNING: Resuming is not implemented for this version")
-        # resumed = False
-        # with open(Path(resume).resolve(), "rb") as resume_file:
-        #     state_data = pickle.load(resume_file)
-        #     entity_grouping = state_data["grouping"]
-        #     curr_tx = state_data["tx"]
 
     with open(input_path.joinpath("skipped.csv"), "w+") as _:
         pass
@@ -501,11 +477,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                     bar.update(total_count_tx)
 
                 for tx, outputs, leftover in iterator:
-                    # if interchunk_transaction_group is not None and leftover:
-                    #     if tx == interchunk_transaction_group[0]:
-                    #         interchunk_transaction_group[1].extend(outputs)
-                    #         continue
-
                     if interchunk_transaction_group is not None:
                         # We need to do this because a transaction group may be
                         # split into multiple returned batches
@@ -530,13 +501,8 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
                 # Statistics section
                 bar.update(count_tx)
                 bar.set_postfix({
-                    # "entities": len(entity_grouping.entity_idx_to_addresses),
-                    # "joined": entity_grouping.counter_joined_entities,
                     "iteration": iteration,
-                    # "skipped": skipped,
                     "queue size": "{:.0f}".format(queue_size(queued_output_groups)),
-                    # "max_index": cache.lookup_keys[cache.lookup_cursor - 1][:5],
-                    # "max_distance": start_distance
                 })
 
                 total_count_tx += count_tx
@@ -544,7 +510,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
             if len(address_group) > 1:
                 entity_grouping.update_from_address_group(list(address_group))
-                # tx_with_group.append(curr_tx)
 
             if queued_output_groups:
                 processed = process_queue(queued_output_groups, cache, output_address_iterator, input_path)
@@ -585,7 +550,6 @@ if __name__ == "__main__":
         print("Found {} transactions".format(tot))
 
     start = time.time_ns()
-    process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.resume,
-            args.max_queue_size, args.start_distance)
+    process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.max_queue_size)
     end = time.time_ns()
     print((end - start) / 1e9)
