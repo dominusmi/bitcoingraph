@@ -167,6 +167,17 @@ bitcoingraph stores Bitcoin transactions as directed labelled graph in a Neo4J g
 can be bootstrapped by loading an initial blockchain dump, performing entity computation over the entire dump as
 described by [Ron and Shamir](https://eprint.iacr.org/2012/584.pdf), and ingesting it into a running Neo4J instance.
 
+#### Important note
+When we took over this project, it had last been used on data from 2016. We had to entirely 
+re-write parts of the codebase due to the fact that the total bitcoin blockchain size at the time was
+a couple of GBs, whereas nowadays it's closer to 1TB. Many of the processes were not adapted for the size.
+
+I would strongly suggest anyone wanting to do this on the real blockchain, to first do the whole process
+at small scale. Using only the first 200k blocks, the entire process can be done on any average modern laptop in less 
+than 2 hours (most of which will be waiting for computations). 
+This way, one can get comfortable with the process and try the database at small scale. At real scale, the process takes
+a couple of days total in various computation, hence why it's better to do a trial run first.
+
 ### Step 1: Create transaction dump from blockchain
 
 Bitcoingraph provides the `bcgraph-export` tool for exporting transactions in a given block range from the blockchain.
@@ -188,14 +199,64 @@ The following CSV files are created (with separate header files):
 
 ### Step 2: Compute entities over transaction dump
 
+
+#### 2.1: Compute the entities
 The following command computes entities for a given blockchain data dump:
 
-    bcgraph-compute-entities -i blocks_0_1000
+    bcgraph-compute-entities -i blocks_0_1000 
+
+
+This script is extremely computationally intensive, both in memory and in processing.
+There are various parameters that can be tuned to optimize performance:
+
+`--read-size`: Number of bytes to read at once from the file
+
+`--chunk-size`: Size of a batch to process at once (in bytes)
+
+`--cached-batches`: Number of last processed batches to keep in memory (uses a circular buffer)
+
+`--max-queue-size`: Number of outputs to process together. This is the most important variable
+both in terms of performance and memory usage. The higher the better.
+
+On our machine with 110G and AMD Ryzen 5 5600G, we used the following parameters:
+```commandline
+--cached-batches 5_000 --chunk-size 50_000 --read-size 100_000_000 --max-queue-size 5_000_000_000
+```
+and reached max usage of 65G of RAM, and took ~15 hours to complete.
+
+
+#### 2.2: Merge the entities together
+
+Once the entities are computed, we also need to run the following
+```bash
+cd merge-entities && cargo run --release /path/to/rel_entity_address.csv /path/to/rel_entity_address_merged.csv
+```
+The first generates computes entities, but due to the size of the file, it has to be 
+done in pieces. Therefore, if the entire entities happen to be over to pieces of the 
+file, it wrongly creates two entities. That's the reason for merge-entities script,
+which is written in `rust` for performance purposes and merged all entities that 
+were separated back together. The second argument is the output file, in theory it can 
+be the same as the input, but what we used (and is used throughout this README) is simply
+adding the _merged suffix.
+
 
 Two additional files are created:
 
 * entities.csv: list of entity identifiers (entity_id)
-* rel_address_entity.csv: assignment of addresses to entities (entity_id, address)
+* rel_address_entity_merged.csv: assignment of addresses to entities (entity_id, address)
+
+#### Note: what is this about?
+Higher up in the README, we explained what an entity is. Computing entities is a simple
+process fundamentally, made very hard due to the size of the files. 
+We use two files: rel_input.csv and rel_output_address.csv. The first is in
+chronological order, and the second is sorted by Output id.
+
+The objective is two-fold: 1. for each output, find the address, and 2. if two addresses
+are inputs to the same transaction, create an entity (or merge if one of the two is already
+part of an entity).
+
+The `bcgraph-compute-entities` is basically a database specialized for this very specific
+file format and objective.
 
 ### Step 3: Compute P2PKH and P2WPKH addresses
 The raw data doesn't include the connection between addresses in the format public key, and the 
@@ -206,7 +267,7 @@ addresses, and creates a file `rel_address_address.csv` and `rel_address_address
 bcgraph-pk-to-addresses -i blocks_0_1000
 ```
 
-### Step 3: Ingest pre-computed dump into Neo4J
+### Step 4: Ingest pre-computed dump into Neo4J
 
 Download and install [Neo4J][neo4j] community edition (>= 5.0.0):
 
@@ -234,7 +295,7 @@ neo4j-admin database import full --overwrite-destination
   --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv 
   --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv 
   --relationships=INPUT=rel_input_header.csv,rel_input.csv 
-  --relationships=USES=rel_output_address_header.csv,rel_output_address.csv 
+  --relationships=USES=rel_output_address_header.csv,rel_output_address_merged.csv 
   --nodes=:Entity=entity_header.csv,entity.csv 
   --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address.csv  
   --relationships=GENERATES=rel_address_address_header.csv,rel_address_address.csv 
