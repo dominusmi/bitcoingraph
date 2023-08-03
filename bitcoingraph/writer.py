@@ -35,15 +35,15 @@ class CSVDumpWriter:
         self._rel_input_file = open(self._get_path('rel_input'), 'a')
         self._rel_output_address_file = open(self._get_path('rel_output_address'), 'a')
 
-        self._block_writer = csv.writer(self._blocks_file)
-        self._transaction_writer = csv.writer(self._transactions_file)
-        self._output_writer = csv.writer(self._outputs_file)
-        self._address_writer = csv.writer(self._addresses_file)
-        self._rel_block_tx_writer = csv.writer(self._rel_block_tx_file)
-        self._rel_block_block_writer = csv.writer(self._rel_block_block_file)
-        self._rel_tx_output_writer = csv.writer(self._rel_tx_output_file)
-        self._rel_input_writer = csv.writer(self._rel_input_file)
-        self._rel_output_address_writer = csv.writer(self._rel_output_address_file)
+        self._block_writer = csv.writer(self._blocks_file, lineterminator="\n")
+        self._transaction_writer = csv.writer(self._transactions_file, lineterminator="\n")
+        self._output_writer = csv.writer(self._outputs_file, lineterminator="\n")
+        self._address_writer = csv.writer(self._addresses_file, lineterminator="\n")
+        self._rel_block_tx_writer = csv.writer(self._rel_block_tx_file, lineterminator="\n")
+        self._rel_block_block_writer = csv.writer(self._rel_block_block_file, lineterminator="\n")
+        self._rel_tx_output_writer = csv.writer(self._rel_tx_output_file, lineterminator="\n")
+        self._rel_input_writer = csv.writer(self._rel_input_file, lineterminator="\n")
+        self._rel_output_address_writer = csv.writer(self._rel_output_address_file, lineterminator="\n")
         return self
 
     def __exit__(self, type, value, traceback):
