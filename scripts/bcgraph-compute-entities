@@ -536,18 +536,15 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    sort_input = args.sort_input
 
     if args.sort_output:
         print("Sorting rel_output_address.csv")
         sort(args.input_path, 'rel_output_address.csv')
 
-    tot = args.tot
-    if args.tot is None:
-        print("Getting upper bound approximate number of transactions for statistics display")
-        tx_path = Path(args.input_path).resolve().joinpath("transactions.csv")
-        tot = int(round(os.path.getsize(tx_path) / 70))
-        print("Found {} transactions".format(tot))
+    print("Getting upper bound approximate number of transactions for statistics display")
+    tx_path = Path(args.input_path).resolve().joinpath("transactions.csv")
+    tot = int(round(os.path.getsize(tx_path) / 70))
+    print("Found {} transactions".format(tot))
 
     start = time.time_ns()
     process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.max_queue_size)
