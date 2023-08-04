@@ -5,7 +5,7 @@ Bitcoingraph - A Python library for exploring the Bitcoin transaction graph.
 The original repository was created in 2015 as a thesis for a university master degree. Since 2015, the 
 blockchain bitcoin has changed a lot.
 
-In 2021, author (s7p)[https://github.com/s7p] made a fork to add the difficulty, connect blocks together, 
+In 2021, author [s7p](https://github.com/s7p) made a fork to add the difficulty, connect blocks together, 
 and fix some compatibility issues.
 
 This fork contains large refactorings. On the compatibility side, the addresses were not sent back in the 
