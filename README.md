@@ -4,6 +4,12 @@ Bitcoingraph - A Python library for exploring the Bitcoin transaction graph.
 
 ## Prerequesites
 
+## OS Note
+The code can only be run on UNIX compatible systems, as it makes use of `sort` and `uniq` terminal commands. 
+The newer versions were only tested on linux, but the modifications made should not affect MAC OSX.
+It was not tested on windows, it will not work on "native" windows, but could potentially work if run through 
+some linux virtualisation (e.g. WSL) or some UNIX terminal system.
+
 ### Bitcoin Core setup and configuration
 
 First, install the current version of Bitcoin Core (v.11.1), either from [source](https://github.com/bitcoin/bitcoin) or
