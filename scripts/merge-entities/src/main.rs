@@ -115,6 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         unique_entity_idx.insert(value);
     }
 
+    println!("Found a total of {:?} entities", &unique_entity_idx.len());
 
     let path: &Path = entity_path.as_ref();
     let entity_file  = File::create(path)?;
