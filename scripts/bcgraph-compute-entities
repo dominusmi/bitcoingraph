@@ -435,14 +435,20 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
     with open(input_path.joinpath("checkpoint.csv"), "w+") as _:
         pass
 
-    if os.path.getsize(input_path.joinpath("rel_entity_address.csv")) > 100_000:
-        r = input(
-            "The output file rel_entity_address.csv already exists, are you sure you want to overwrite it? [y/n]\n")
-        if r.strip() != "y":
-            print("Stopping process")
-            exit(0)
-        with open(input_path.joinpath("rel_entity_address.csv"), "w+") as _:
-            pass
+    try:
+        size = os.path.getsize(input_path.joinpath("rel_entity_address.csv"))
+        if size > 100_000:
+            r = input(
+                "The output file rel_entity_address.csv already exists, are you sure you want to overwrite it? [y/n]\n")
+            if r.strip() != "y":
+                print("Stopping process")
+                exit(0)
+            with open(input_path.joinpath("rel_entity_address.csv"), "w+") as _:
+                pass
+
+    except FileNotFoundError:
+        pass
+
 
     with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
         header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
