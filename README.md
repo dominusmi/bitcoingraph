@@ -1,10 +1,27 @@
 Bitcoingraph - A Python library for exploring the Bitcoin transaction graph.
 
-[![Build Status](https://travis-ci.org/behas/bitcoingraph.svg?branch=master)](https://travis-ci.org/behas/bitcoingraph)
+## Difference with the "original" repository
+
+The original repository was created in 2015 as a thesis for a university master degree. Since 2015, the 
+blockchain bitcoin has changed a lot.
+
+In 2021, author (s7p)[https://github.com/s7p] made a fork to add the difficulty, connect blocks together, 
+and fix some compatibility issues.
+
+This fork contains large refactorings. On the compatibility side, the addresses were not sent back in the 
+same format as they used to by bitcoind service (see https://github.com/btcsuite/btcd/issues/1874).
+However, a much larger problem was the entity computation. The previous script was made in 2015, with the 
+entire blockchain weighting a few GBs. Nowadays, it weights close to 1TB. The script was not adapted to 
+this modern issue, and would require hundreds of GBs (we stopped testing after 200GB, the exact number is unknown).
+
+This required a complete overhaul of the entity computation. The script now contains arguments to limit the amount 
+of memory used, meaning you can probably run it on 16GB (I wouldn't personally, but it will work). There's a section
+below regarding requirements and giving more details.
+
 
 ## Prerequesites
 
-## OS Note
+### OS Note
 The code can only be run on UNIX compatible systems, as it makes use of `sort` and `uniq` terminal commands. 
 The newer versions were only tested on linux, but the modifications made should not affect MAC OSX.
 It was not tested on windows, it will not work on "native" windows, but could potentially work if run through 
