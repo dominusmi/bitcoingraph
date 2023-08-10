@@ -21,47 +21,68 @@ logger.setLevel(logging.INFO)
 file_handler = logging.FileHandler(f"track-bitcoin-output-{datetime.utcnow().isoformat()}.log")
 logger.addHandler(file_handler)
 
+# @profile
 def run_query(session, txid, result_queue, query):
     # Replace the following query with your specific query, using txid as a parameter
     result = session.run(query, txid=txid)
     result_queue.put((txid, result.values()))
     session.close()
 
-
+# @profile
 def parallel_execution(driver, thread_function, iterable):
-    def wrapper(f, queue, session, elm):
-        try:
-            ret = f(session, elm)
-            queue.put(ret)
-        finally:
-            session.close()
+    def wrapper(idx, f, input_queue: Queue, queue, session):
+        while True:
+            input = input_queue.get()
+            if input is None:
+                break
+            else:
+                ret = f(session, elm)
+                queue.put((idx, ret))
 
-    result_queue = Queue()
-    threads = []
+    try:
+        threads = []
+        result_queues = [Queue() for _ in range(20)]
+        sessions = [driver.session() for i in range(20)]
+        input_queues = [Queue() for _ in range(20)]
+        for i in range(20):
+            thread = Thread(target=wrapper, args=(i, thread_function, input_queues[i], result_queues[i], sessions[i]))
+            thread.start()
+            threads.append(thread)
 
-    # with driver.session() as session:
-    #     for elm in iterable:
-    #         yield thread_function(session, elm)
-    # return
-    for elm in iterable:
-        while len(threads) >= 50:
-            threads = [t for t in threads if t.is_alive()]
-            if not result_queue.empty():
-                yield result_queue.get()
-            time.sleep(0.1)
 
-        session = driver.session()
-        thread = Thread(target=wrapper, args=(thread_function, result_queue, session, elm))
-        thread.start()
-        threads.append(thread)
+        for i, elm in enumerate(iterable):
+            sent = False
+            if i < 20:
+                input_queues[i].put(elm)
+                continue
 
-    # Wait for all threads to finish
-    for thread in threads:
-        thread.join()
+            while True:
+                for queue in result_queues:
+                    if not queue.empty():
+                        idx, result = queue.get()
+                        input_queues[idx].put(elm)
+                        yield result
+                        sent=True
+                        break
+                if sent:
+                    break
+                time.sleep(0.1)
 
-    # Yield the results from the queue
-    while not result_queue.empty():
-        yield result_queue.get()
+        for queue in input_queues:
+            queue.put(None)
+
+        # Wait for all threads to finish
+        for thread in threads:
+            thread.join()
+
+        # Yield the results from the queue
+        for result_queue in result_queues:
+            while not result_queue.empty():
+                rows = result_queue.get()[1]
+                yield rows
+
+    finally:
+        [session.close() for session in sessions]
 
 class Walker(Tree):
     def __init__(self):
@@ -87,12 +108,16 @@ class Walker(Tree):
     def expand_node(self, txid: str, new_output: str, dollar_amount, address):
         if self.get_node(new_output) is None:
             self.create_node(identifier=new_output, parent=txid, data={"$": dollar_amount, "address": address})
+            return True
+        else:
+            return False
 
     def remove_path(self, txid):
-        parent = self.parent(txid)
-        if parent is None:
+        try:
+            parent = self.parent(txid)
+        except treelib.exceptions.NodeIDAbsentError:
             return 0
-        if len(self.children(parent.identifier)) == 1:
+        if len(self.children(parent.identifier)) == 1 and parent.identifier != "root":
             return self.remove_path(parent.identifier)
         else:
             deleted = self.remove_node(txid)
@@ -116,7 +141,7 @@ class InputWalker(Walker):
             else:
                 self.remove_node(leaf.identifier)
 
-
+# @profile
 def track_output(driver, start, end, min_amount):
     logger.info(f"Running between {start} and {end}. Minimum transaction amount: {min_amount}$")
 
@@ -166,12 +191,12 @@ def track_output(driver, start, end, min_amount):
             ts = session.run("MATCH (t:Transaction {txid: $txid})<-[:CONTAINS]-(b:Block) RETURN b.timestamp as ts", txid=txid).single().get("ts")
         except AttributeError:
             logger.warning(f"How can {txid} not have a block?!")
-            exit(1)
+            return None
         btc_price = get_average_price(ts)
         result = session.run(query_template, txid=txid, min_value=min_amount/btc_price)
         return txid, result.values()
 
-
+    previous_transactions = set([])
     logger.info("Start walk")
     # with driver.session() as session:
     for depth in range(1,100):
@@ -204,8 +229,13 @@ def track_output(driver, start, end, min_amount):
 
         walker.expand_transactions()
 
-        logger.info(f"Expanding {len(walker.leaves())} transactions. Depth: {depth}")
-        for txid,rows in parallel_execution(driver, thread_function, walker.get_next_input()):
+        to_remove = set([])
+        transactions = list(walker.get_next_input())
+        logger.info(f"Expanding {len(transactions)} transactions. Depth: {depth}")
+
+        logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
+        previous_transactions = set(transactions)
+        for txid,rows in parallel_execution(driver, thread_function, transactions):
             # rows = session.run(query_template, txid=txid).values()
             if not rows:
                 deleted = walker.remove_path(txid)
@@ -219,7 +249,16 @@ def track_output(driver, start, end, min_amount):
                     walker.expand_node(txid, txid_n, value*price, address)
                     logger.info(walker.get_path(txid_n))
                     return
-                walker.expand_node(txid, txid_n, value*price, address)
+                if not walker.expand_node(txid, txid_n, value*price, address):
+                    # implies the path is already checked and is therefore dead
+                    to_remove.add(txid)
+
+        if to_remove:
+            for txid in to_remove:
+                node = walker.get_node(txid)
+                if node and len(walker.children(txid)) == 0:
+                    logger.debug(f"Removing {txid}")
+                    walker.remove_path(txid)
 
 
 
