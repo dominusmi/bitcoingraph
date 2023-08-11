@@ -323,7 +323,7 @@ parser.add_argument('--host', default="0.0.0.0", help='Neo4j host')
 parser.add_argument('--port', default=7687, help='Neo4j port', type=int)
 parser.add_argument('-u', '--username', required=True, help='Neo4j user')
 parser.add_argument('-p', '--password', required=True, help='Neo4j password')
-parser.add_argument('-d', '--max-depth', required=False, help='Max depth to expand (in transactions)', default=100)
+parser.add_argument('-d', '--max-depth', required=False, help='Max depth to expand (in transactions)', default=100, type=int)
 parser.add_argument('-m', '--min-amount-dollars', required=False, default=1000, type=int,
                     help="Skip expanding outputs if the associated value is lower than this (in dollars).")
 
