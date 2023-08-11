@@ -182,7 +182,7 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
             for o in outputs:
                 address_to_outputs[address].append(o)
                 walker.add_root(o)
-        logger.info(f"Initial addresses: {address_to_outputs.keys()}")
+        logger.info(f"Addresses found: {address_to_outputs.keys()}")
         logger.info(f"Getting addresses of entity {end}")
         try:
             int(end)
@@ -196,7 +196,7 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
         """ % name, destination=end).values("addresses")
         end_addresses = set(end_addresses[0][0])
 
-        logger.info(f"End addresses: {end_addresses}")
+        logger.info(f"Addresses found: {end_addresses}")
 
 
     query_template = """
