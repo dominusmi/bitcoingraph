@@ -170,7 +170,7 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
     address_to_outputs = {}
     walker = InputWalker()
     with driver.session() as session:
-        logger.info("Getting starting values")
+        logger.info(f"Getting addresses of entity {start}")
         result = session.run("""
             MATCH (e:Entity {name: $entityName})--(a:Address)--(o:Output)
             WITH a.address as address, collect(o.txid_n) as o
@@ -183,7 +183,7 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
                 address_to_outputs[address].append(o)
                 walker.add_root(o)
         logger.info(f"Initial addresses: {address_to_outputs.keys()}")
-        logger.info("Getting destination addresses")
+        logger.info(f"Getting addresses of entity {end}")
         try:
             int(end)
             name = "entity_id"
