@@ -164,6 +164,8 @@ class Summary:
 # @profile
 def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log_transactions):
     logger.info(f"Finding bitcoin trail {end}->{start}. Minimum transaction amount: {min_amount}$")
+    if ignore_entities:
+        logger.info("Ignoring paths through entities")
 
     address_to_outputs = {}
     walker = InputWalker()
