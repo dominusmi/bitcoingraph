@@ -3,6 +3,7 @@
 import argparse
 import logging
 import time
+import uuid
 from datetime import datetime
 from queue import Queue
 from threading import Thread
@@ -11,6 +12,8 @@ import treelib.exceptions
 from neo4j import GraphDatabase
 from treelib import Tree
 
+run_id = uuid.uuid4()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s: %(message)s',
@@ -18,8 +21,13 @@ logging.basicConfig(
 logger = logging.getLogger("entities")
 logger.setLevel(logging.INFO)
 
-file_handler = logging.FileHandler(f"track-bitcoin-output-{datetime.utcnow().isoformat()}.log")
+file_handler = logging.FileHandler(f"track-bitcoin-output-{datetime.utcnow().isoformat()}-{run_id}.log")
 logger.addHandler(file_handler)
+
+transaction_logger = logging.getLogger("transactions")
+file_handler = logging.FileHandler(f"track-bitcoin-transactions-{run_id}.log")
+transaction_logger.addHandler(file_handler)
+transaction_logger.propagate = False
 
 # @profile
 def run_query(session, txid, result_queue, query):
@@ -27,17 +35,18 @@ def run_query(session, txid, result_queue, query):
     result = session.run(query, txid=txid)
     result_queue.put((txid, result.values()))
     session.close()
+def wrapper(idx, f, input_queue_: Queue, queue, session):
+    while True:
+        input = input_queue_.get()
+        if input is None:
+            break
+        else:
+            ret = f(session, input)
+            queue.put((idx, ret))
 
 # @profile
 def parallel_execution(driver, thread_function, iterable, main_queue: Queue):
-    def wrapper(idx, f, input_queue: Queue, queue, session):
-        while True:
-            input = input_queue.get()
-            if input is None:
-                break
-            else:
-                ret = f(session, elm)
-                queue.put((idx, ret))
+
 
     threads = []
     result_queues = [Queue() for _ in range(20)]
@@ -153,7 +162,7 @@ class Summary:
         self.depth = 1
 
 # @profile
-def track_output(driver, start, end, min_amount, max_depth):
+def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log_transactions):
     logger.info(f"Finding bitcoin trail {end}->{start}. Minimum transaction amount: {min_amount}$")
 
     address_to_outputs = {}
@@ -216,34 +225,38 @@ def track_output(driver, start, end, min_amount, max_depth):
             # for txid in walker.get_next_input():
                 # for txid in walker.get_next_input():
             added_through_entity = 0
-            with driver.session() as session:
-                query_through_entity = """
-                MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
-                WHERE a.address in $addresses
-                WITH a, count(r) as cr
-                WHERE cr < 1000
-                WITH a
-                MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
-                WHERE a <> b 
-                WITH a, count(r) as cr
-                WHERE cr < 1000
-                MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
-                RETURN collect(distinct o.txid_n) as txid_n
-                """
-                addresses = {l.data["address"] for l in walker.leaves() if l.data is not None}
-                if addresses:
-                    logger.debug(f"Getting outputs through entity for {addresses}")
-                    result = session.run(query_through_entity, addresses=list(addresses)).values()
-                    if result and result[0] and result[0][0]:
-                        for o in result[0][0]:
-                            added_through_entity += 1
-                            walker.add_root(o)
+            if not ignore_entities:
+                with driver.session() as session:
+                    query_through_entity = """
+                    MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
+                    WHERE a.address in $addresses
+                    WITH a, count(r) as cr
+                    WHERE cr < 1000
+                    WITH a
+                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
+                    WHERE a <> b 
+                    WITH a, count(r) as cr
+                    WHERE cr < 1000
+                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
+                    RETURN collect(distinct o.txid_n) as txid_n
+                    """
+                    addresses = {l.data["address"] for l in walker.leaves() if l.data is not None}
+                    if addresses:
+                        logger.debug(f"Getting outputs through entity for {addresses}")
+                        result = session.run(query_through_entity, addresses=list(addresses)).values()
+                        if result and result[0] and result[0][0]:
+                            for o in result[0][0]:
+                                added_through_entity += 1
+                                walker.add_root(o)
 
 
             walker.expand_transactions()
-
             to_remove = set([])
-            transactions = list(walker.get_next_input())
+            transactions = list(set(walker.get_next_input()))
+
+            if log_transactions:
+                transaction_logger.info(f"Transactions expanded: {transactions}")
+
             logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions}. "
                         f"Expanding {len(transactions)} transactions. Depth: {depth}")
 
@@ -257,6 +270,9 @@ def track_output(driver, start, end, min_amount, max_depth):
                 if x is None:
                     break
                 txid, rows = x
+                if log_transactions:
+                    transaction_logger.info(f"Explored {txid}")
+
                 summary.expanded_transactions += 1
                 # rows = session.run(query_template, txid=txid).values()
                 if not rows:
@@ -326,6 +342,11 @@ parser.add_argument('-p', '--password', required=True, help='Neo4j password')
 parser.add_argument('-d', '--max-depth', required=False, help='Max depth to expand (in transactions)', default=100, type=int)
 parser.add_argument('-m', '--min-amount-dollars', required=False, default=1000, type=int,
                     help="Skip expanding outputs if the associated value is lower than this (in dollars).")
+parser.add_argument("--ignore-entities", action="store_true",
+                    help="Do not go through entities along the way.")
+parser.add_argument("--log-transactions", action="store_true",
+                    help="Log all transactions explored")
+
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -333,4 +354,5 @@ if __name__ == "__main__":
                                   auth=(args.username, args.password),
                                   connection_timeout=3600)
 
-    track_output(driver, args.receiver, args.owner,  args.min_amount_dollars, args.max_depth)
+    track_output(driver, args.receiver, args.owner,  args.min_amount_dollars, args.max_depth, args.ignore_entities,
+                 args.log_transactions)
