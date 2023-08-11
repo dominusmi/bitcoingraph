@@ -1,7 +1,7 @@
+#!/usr/bin/env python
+
 import argparse
 import logging
-import os
-import pathlib
 import time
 from datetime import datetime
 from queue import Queue
@@ -29,7 +29,7 @@ def run_query(session, txid, result_queue, query):
     session.close()
 
 # @profile
-def parallel_execution(driver, thread_function, iterable):
+def parallel_execution(driver, thread_function, iterable, main_queue: Queue):
     def wrapper(idx, f, input_queue: Queue, queue, session):
         while True:
             input = input_queue.get()
@@ -39,11 +39,11 @@ def parallel_execution(driver, thread_function, iterable):
                 ret = f(session, elm)
                 queue.put((idx, ret))
 
+    threads = []
+    result_queues = [Queue() for _ in range(20)]
+    sessions = [driver.session() for i in range(20)]
+    input_queues = [Queue() for _ in range(20)]
     try:
-        threads = []
-        result_queues = [Queue() for _ in range(20)]
-        sessions = [driver.session() for i in range(20)]
-        input_queues = [Queue() for _ in range(20)]
         for i in range(20):
             thread = Thread(target=wrapper, args=(i, thread_function, input_queues[i], result_queues[i], sessions[i]))
             thread.start()
@@ -61,7 +61,8 @@ def parallel_execution(driver, thread_function, iterable):
                     if not queue.empty():
                         idx, result = queue.get()
                         input_queues[idx].put(elm)
-                        yield result
+                        main_queue.put(result)
+                        # yield result
                         sent=True
                         break
                 if sent:
@@ -79,9 +80,14 @@ def parallel_execution(driver, thread_function, iterable):
         for result_queue in result_queues:
             while not result_queue.empty():
                 rows = result_queue.get()[1]
-                yield rows
+                main_queue.put(rows)
+                # yield rows
 
     finally:
+        # try to make as clean an exit as possible
+        main_queue.put(None)
+        for queue in input_queues:
+            queue.put(None)
         [session.close() for session in sessions]
 
 class Walker(Tree):
@@ -141,9 +147,14 @@ class InputWalker(Walker):
             else:
                 self.remove_node(leaf.identifier)
 
+class Summary:
+    def __init__(self):
+        self.expanded_transactions = 0
+        self.depth = 1
+
 # @profile
-def track_output(driver, start, end, min_amount):
-    logger.info(f"Running between {start} and {end}. Minimum transaction amount: {min_amount}$")
+def track_output(driver, start, end, min_amount, max_depth):
+    logger.info(f"Finding bitcoin trail {end}->{start}. Minimum transaction amount: {min_amount}$")
 
     address_to_outputs = {}
     walker = InputWalker()
@@ -199,67 +210,81 @@ def track_output(driver, start, end, min_amount):
     previous_transactions = set([])
     logger.info("Start walk")
     # with driver.session() as session:
-    for depth in range(1,100):
-        # for txid in walker.get_next_input():
+    summary = Summary()
+    try:
+        for depth in range(1,max_depth):
             # for txid in walker.get_next_input():
-        added_through_entity = 0
-        with driver.session() as session:
-            query_through_entity = """
-            MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
-            WHERE a.address in $addresses
-            WITH a, count(r) as cr
-            WHERE cr < 1000
-            WITH a
-            MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
-            WHERE a <> b 
-            WITH a, count(r) as cr
-            WHERE cr < 1000
-            MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
-            RETURN collect(distinct o.txid_n) as txid_n
-            """
-            addresses = {l.data["address"] for l in walker.leaves() if l.data is not None}
-            if addresses:
-                logger.debug(f"Getting outputs through entity for {addresses}")
-                result = session.run(query_through_entity, addresses=list(addresses)).values()
-                if result and result[0] and result[0][0]:
-                    for o in result[0][0]:
-                        added_through_entity += 1
-                        walker.add_root(o)
+                # for txid in walker.get_next_input():
+            added_through_entity = 0
+            with driver.session() as session:
+                query_through_entity = """
+                MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
+                WHERE a.address in $addresses
+                WITH a, count(r) as cr
+                WHERE cr < 1000
+                WITH a
+                MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
+                WHERE a <> b 
+                WITH a, count(r) as cr
+                WHERE cr < 1000
+                MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
+                RETURN collect(distinct o.txid_n) as txid_n
+                """
+                addresses = {l.data["address"] for l in walker.leaves() if l.data is not None}
+                if addresses:
+                    logger.debug(f"Getting outputs through entity for {addresses}")
+                    result = session.run(query_through_entity, addresses=list(addresses)).values()
+                    if result and result[0] and result[0][0]:
+                        for o in result[0][0]:
+                            added_through_entity += 1
+                            walker.add_root(o)
 
 
-        walker.expand_transactions()
+            walker.expand_transactions()
 
-        to_remove = set([])
-        transactions = list(walker.get_next_input())
-        logger.info(f"Expanding {len(transactions)} transactions. Depth: {depth}")
+            to_remove = set([])
+            transactions = list(walker.get_next_input())
+            logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions}. "
+                        f"Expanding {len(transactions)} transactions. Depth: {depth}")
 
-        logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
-        previous_transactions = set(transactions)
-        for txid,rows in parallel_execution(driver, thread_function, transactions):
-            # rows = session.run(query_template, txid=txid).values()
-            if not rows:
-                deleted = walker.remove_path(txid)
-                continue
-            row = rows[0]
-            ts = row[1]
-            price = get_average_price(ts)
-            for (txid_n, value, address) in row[2]:
-                if address in end_addresses:
-                    logger.info("Found destination")
-                    walker.expand_node(txid, txid_n, value*price, address)
-                    logger.info(walker.get_path(txid_n))
-                    return
-                if not walker.expand_node(txid, txid_n, value*price, address):
-                    # implies the path is already checked and is therefore dead
-                    to_remove.add(txid)
+            logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
+            previous_transactions = set(transactions)
+            receive_queue = Queue()
+            thread = Thread(target=parallel_execution, args=(driver, thread_function, transactions, receive_queue))
+            thread.start()
+            while True:
+                x = receive_queue.get()
+                if x is None:
+                    break
+                txid, rows = x
+                summary.expanded_transactions += 1
+                # rows = session.run(query_template, txid=txid).values()
+                if not rows:
+                    deleted = walker.remove_path(txid)
+                    continue
+                row = rows[0]
+                ts = row[1]
+                price = get_average_price(ts)
+                for (txid_n, value, address) in row[2]:
+                    if address in end_addresses:
+                        logger.info("Found destination")
+                        walker.expand_node(txid, txid_n, value*price, address)
+                        logger.info(walker.get_path(txid_n))
+                        return
+                    if not walker.expand_node(txid, txid_n, value*price, address):
+                        # implies the path is already checked and is therefore dead
+                        to_remove.add(txid)
 
-        if to_remove:
-            for txid in to_remove:
-                node = walker.get_node(txid)
-                if node and len(walker.children(txid)) == 0:
-                    logger.debug(f"Removing {txid}")
-                    walker.remove_path(txid)
+            if to_remove:
+                for txid in to_remove:
+                    node = walker.get_node(txid)
+                    if node and len(walker.children(txid)) == 0:
+                        logger.debug(f"Removing {txid}")
+                        walker.remove_path(txid)
 
+            summary.depth = depth
+    finally:
+        logger.info(f"Exited. Expanded a total of {summary.expanded_transactions} transactions up to depth {summary.depth}")
 
 
 def get_average_price(timestamp):
@@ -280,17 +305,27 @@ def get_average_price(timestamp):
     closest_date = min(data.keys(), key=lambda x: abs(given_date - datetime.strptime(x, date_format)))
     return data[closest_date]
 
-def main(driver, receiver, owner, min_amount):
-    track_output(driver,  receiver, owner, min_amount)
-
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(
+    description="This binary is used to find the shortest direct bitcoin trail from one entity to another. The entity "
+                "Can be provided both as entity_id (NOT the neo4j hidden id, the value entity.id), or as a name. "
+                "By direct trail, we mean it only follows the following two types of trail:"
+                "(receiver)<-[:USES]<-(:Output)<-[:INPUT]<-..(:Transaction)..<-[:OUTPUT]-(:Output)-[:USES]->(owner)"
+                "Additionally, it goes through entities, so for each Output, it looks at the associated address and the entity,"
+                "and if there's one, it also follows all the input to the entity addresses\n"
+                "The parameter --min-amount-dollars can further be used to filter out Outputs that have a value"
+                "smaller than the min amount. It uses the lower bound of the BTC value for the month of the transaction\n\n"
+                "Keep in mind it knows which to call based on whether the id can be converted to an integer, so if you provide "
+                "a name which is actually a number, it will try to get the entity with that entity_id instead of name."
+)
 parser.add_argument('receiver', help="Entity name or id receiving the bitcoins")
 parser.add_argument('owner', help="Entity name or id sending the bitcoins")
-parser.add_argument('--host', default="0.0.0.0", help='Host')
-parser.add_argument('--port', default=7687, help='Port', type=int)
-parser.add_argument('-u', '--username', required=True, help='User')
-parser.add_argument('-p', '--password', required=True, help='Password')
-parser.add_argument('--min-amount-dollars', required=False, default=1000, type=int)
+parser.add_argument('--host', default="0.0.0.0", help='Neo4j host')
+parser.add_argument('--port', default=7687, help='Neo4j port', type=int)
+parser.add_argument('-u', '--username', required=True, help='Neo4j user')
+parser.add_argument('-p', '--password', required=True, help='Neo4j password')
+parser.add_argument('-d', '--max-depth', required=False, help='Max depth to expand (in transactions)', default=100)
+parser.add_argument('-m', '--min-amount-dollars', required=False, default=1000, type=int,
+                    help="Skip expanding outputs if the associated value is lower than this (in dollars).")
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -298,4 +333,4 @@ if __name__ == "__main__":
                                   auth=(args.username, args.password),
                                   connection_timeout=3600)
 
-    main(driver, args.receiver, args.owner,  args.min_amount_dollars)
+    track_output(driver, args.receiver, args.owner,  args.min_amount_dollars, args.max_depth)
