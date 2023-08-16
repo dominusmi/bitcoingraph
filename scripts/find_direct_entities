@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from queue import Queue
 from threading import Thread
-from typing import List, Set, Dict
+from typing import List, Set, Dict, Tuple
 
 import treelib.exceptions
 from neo4j import GraphDatabase
@@ -109,9 +109,14 @@ def parallel_execution(driver, thread_function, iterable, main_queue: Queue):
         [session.close() for session in sessions]
 
 class Walker(Tree):
+    garbage: Set[str]
+    txids: Set[str]
+
     def __init__(self):
         super().__init__()
+        self.garbage = set([])
         self.create_node(identifier="root")
+        self.txids = set([])
 
     def add_root(self, output: str):
         try:
@@ -129,23 +134,36 @@ class Walker(Tree):
             node = self.parent(node.identifier)
         return list(reversed(path))
 
-    def expand_node(self, txid: str, new_output: str, dollar_amount, address):
-        if self.get_node(new_output) is None:
-            self.create_node(identifier=new_output, parent=txid, data={"$": dollar_amount, "address": address})
-            return True
-        else:
-            return False
 
-    def remove_path(self, txid):
-        try:
-            parent = self.parent(txid)
-        except treelib.exceptions.NodeIDAbsentError:
-            return 0
-        if len(self.children(parent.identifier)) == 1 and parent.identifier != "root":
-            return self.remove_path(parent.identifier)
+    def remove_path(self, identifier):
+        node = self.get_node(identifier)
+        if node is None:
+            logger.warning(f"Trying to remove unknown identifier: {identifier}")
         else:
-            deleted = self.remove_node(txid)
-            return deleted
+            if node.data:
+                node.data["end"] = True
+            else:
+                node.data = {"end": True}
+        # try:
+        #     parent = self.parent(identifier)
+        # except treelib.exceptions.NodeIDAbsentError:
+        #     return 0
+        # if len(self.children(parent.identifier)) == 1 and parent.identifier != "root":
+        #     return self.remove_path(parent.identifier)
+        # else:
+        #     deleted = self.remove_node(identifier)
+        #     return deleted
+
+
+    def add_to_garbage(self, identifier: str):
+        self.garbage.add(identifier)
+
+    def empty_garbage(self):
+        for identifier in self.garbage:
+            node = self.get_node(identifier)
+            if node and len(self.children(identifier)) == 0:
+                logger.debug(f"Removing {identifier}")
+                self.remove_path(identifier)
 
 class InputWalker(Walker):
     def get_next_input(self):
@@ -153,18 +171,91 @@ class InputWalker(Walker):
         # way we get a snapshot
         leaves = list(self.leaves())
         for node in leaves:
+            if node.data and node.data.get("end") == True:
+                continue
+
             if "_" not in node.identifier:
                 yield node.identifier
+
+    def expand_node(self, txid: str, new_output: str, dollar_amount, address):
+        if self.get_node(new_output) is None:
+            self.create_node(identifier=new_output, parent=txid, data={"$": dollar_amount, "address": address})
+            return True
+        else:
+            return False
 
     def expand_transactions(self):
         leaves = list(self.leaves())
         for leaf in leaves:
             txid = leaf.identifier.split("_")[0]
-            if self.get_node(txid) is None:
-                self.create_node(identifier=txid, parent=leaf.identifier)
-            else:
-                self.remove_node(leaf.identifier)
 
+            if txid in self.txids:
+                self.remove_path(leaf.identifier)
+            else:
+                self.txids.add(txid)
+                self.create_node(identifier=txid, parent=leaf.identifier)
+
+    def process_input(self, txid, rows, end_addresses):
+        if not rows:
+            self.remove_path(txid)
+            return
+        row = rows[0]
+        ts = row[1]
+        price = get_average_price(ts)
+        for (txid_n, value, address) in row[2]:
+            if address in end_addresses:
+                logger.info("Found destination")
+                self.expand_node(txid, txid_n, value * price, address)
+                logger.info(self.get_path(txid_n))
+                exit(0)
+            if not self.expand_node(txid, txid_n, value * price, address):
+                # implies the path is already checked and is therefore dead
+                self.add_to_garbage(txid)
+
+class OutputWalker(Walker):
+    def process_output(self, txid, rows):
+        if not rows and txid != 'root':
+            self.remove_path(txid)
+            return
+
+        for row in rows:
+            txid_n, address, new_txid = row
+            node_txid_n = self.get_node(txid_n)
+            if node_txid_n is None:
+                self.create_node(identifier=txid_n, parent=txid, data={"address": address})
+
+            if new_txid in self.txids:
+                continue
+            self.txids.add(new_txid)
+            node_txid = self.get_node(new_txid)
+            if node_txid is None:
+                self.create_node(identifier=new_txid, parent=txid_n)
+            else:
+                self.remove_path(new_txid)
+
+    def get_next_output(self):
+        # we don't iterate of leaves directly since it can change as the loop goes on. This
+        # way we get a snapshot
+        leaves = list(self.leaves())
+        for node in leaves:
+            if node.data and node.data.get("end") == True:
+                continue
+
+            if "_" not in node.identifier:
+                yield node.identifier
+
+    def get_latest_addresses(self):
+        addresses = set([])
+        for leaf in self.leaves():
+            if leaf.data is not None and leaf.data.get("end") == True:
+                continue
+
+            node = self.parent(leaf.identifier)
+            if node.data is None or node.data.get("address") is None:
+                continue
+
+            addresses.add(node.data["address"])
+        return addresses
 class Summary:
     def __init__(self):
         self.expanded_transactions = 0
@@ -172,7 +263,7 @@ class Summary:
 
 
 MIN_AMOUNT: int = None
-def thread_function(session, txid):
+def input_thread_function(session, txid):
     global MIN_AMOUNT
     logger.debug(f"Running on {txid}")
     query_template = """
@@ -189,11 +280,33 @@ def thread_function(session, txid):
         return None
     btc_price = get_average_price(ts)
     result = session.run(query_template, txid=txid, min_value=MIN_AMOUNT/btc_price)
-    return txid, result.values()
+    return txid, True, result.values()
+
+def output_thread_function(session, txid):
+    global MIN_AMOUNT
+    logger.debug(f"Running on {txid}")
+
+    results = session.run(
+        """MATCH (:Transaction {txid: $txid})-[:OUTPUT]->(output:Output)-[:INPUT]->(t:Transaction)<-[:CONTAINS]-(b:Block) 
+        WITH output, b.timestamp as ts, t.txid as txid 
+        MATCH (output)-[:USES]->(a:Address) 
+        RETURN output.txid_n as txid_n, output.value as value, a.address as address, ts, txid
+        """
+        , txid=txid
+    ).values()
+
+    tuples = []
+    for row in results:
+        if get_average_price(row[3])*row[1] > MIN_AMOUNT:
+            # txid_n, address, txid
+           tuples.append((row[0], row[2], row[4]))
+    return txid, False, tuples
+
 
 @dataclasses.dataclass
 class Context:
     input_walker: InputWalker
+    output_walker: OutputWalker
     # transactions in current batch
     transactions: List[str]
     # transactions in current batch that were already processed
@@ -213,7 +326,7 @@ class Context:
     resumed: bool
 
 
-def get_outputs_through_entity(session, addresses: List[str]) -> List[str]:
+def get_inputs_through_entity(session, addresses: List[str]) -> List[str]:
     query_through_entity = """
     MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
     WHERE a.address in $addresses
@@ -235,88 +348,125 @@ def get_outputs_through_entity(session, addresses: List[str]) -> List[str]:
             outputs.add(o)
     return list(outputs)
 
+def get_outputs_through_entity(session, addresses: List[str]) -> List[Tuple[str, str, str]]:
+    query_through_entity = """
+    MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
+    WHERE a.address in $addresses
+    WITH a, count(r) as cr
+    WHERE cr < 1000
+    WITH a
+    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
+    WHERE a <> b 
+    WITH a, count(r) as cr
+    WHERE cr < 1000
+    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(:Address)<-[:USES]-(o:Output)-[:INPUT]->(t:Transaction)<-[:CONTAINS]-(block:Block)
+    RETURN o.txid_n as txid_n, a.address as address, t.txid as txid, o.value, block.timestamp as ts
+    """
+
+    result = session.run(query_through_entity, addresses=list(addresses)).values()
+    rows = []
+    for row in result:
+        if get_average_price(row[4]) * row[3] < MIN_AMOUNT:
+            continue
+        rows.append((row[0], row[1], row[2]))
+    return rows
+
+
 def track_output(driver, context: Context):
     global MIN_AMOUNT
     MIN_AMOUNT=context.min_amount
+    start_time = time.time()
 
     logger.info(f"Start walk. Run id: {RUN_ID}")
     # with driver.session() as session:
     summary = Summary()
     last_save = time.time()
-    to_remove = set()
     previous_transactions = context.previous_transactions
-
+    output_transactions = []
     try:
         for depth in range(context.curr_depth,context.max_depth):
-            # for txid in walker.get_next_input():
-                # for txid in walker.get_next_input():
             added_through_entity = 0
             if not context.ignore_entities and not context.resumed:
                 with driver.session() as session:
-
-                    addresses = {l.data["address"] for l in context.input_walker.leaves() if l.data is not None}
+                    addresses = {l.data["address"] for l in context.input_walker.leaves() if l.data is not None and l.data.get("end") != True}
                     if addresses:
+                        logger.info("Expanding through 'input' entities")
                         logger.debug(f"Getting outputs through entity for {addresses}")
-                        outputs = get_outputs_through_entity(session, list(addresses))
+                        outputs = get_inputs_through_entity(session, list(addresses))
                         for o in outputs:
                             added_through_entity += 1
                             context.input_walker.add_root(o)
+
+                    addresses = context.output_walker.get_latest_addresses()
+                    if addresses:
+                        logger.info("Expanding through 'output' entities")
+                        logger.debug(f"Getting outputs through entity for {addresses}")
+                        rows = get_outputs_through_entity(session, list(addresses))
+                        context.output_walker.process_output('root', rows)
+
 
             if context.resumed:
                 transactions = list(set(context.transactions).difference(context.done_transactions))
             else:
                 context.input_walker.expand_transactions()
-                to_remove = set([])
+
+                logger.info("Preparing next transactions")
                 transactions = list(set(context.input_walker.get_next_input()))
+                output_transactions = list(set(context.output_walker.get_next_output()))
 
                 if context.log_transactions:
-                    transaction_logger.info(f"Transactions expanded: {transactions}")
+                    transaction_logger.info(f"Transactions expanded input direction: {transactions}")
+                    transaction_logger.info(f"Transactions expanded output direction: {output_transactions}")
 
-                logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions}. "
-                            f"Expanding {len(transactions)} transactions. Depth: {depth}")
+
+                logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions} ({summary.expanded_transactions / (time.time()-start_time):.2f} tx/s). "
+                            f"Expanding {len(transactions)} input direction + {len(output_transactions)} output direction transactions. Depth: {depth}")
 
                 logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
                 previous_transactions = set(transactions)
 
             receive_queue = Queue()
-            thread = Thread(target=parallel_execution, args=(driver, thread_function, transactions, receive_queue))
+            thread = Thread(target=parallel_execution, args=(driver, input_thread_function, transactions, receive_queue))
+            thread.start()
+
+            thread = Thread(target=parallel_execution, args=(driver, output_thread_function, output_transactions, receive_queue))
             thread.start()
 
             # All the resume setup should be done by now, so we're effectively back into "normal" processing
             context.resumed = False
 
             done_transactions = set()
+            broken = 0
             while True:
                 x = receive_queue.get()
 
                 if x is None:
-                    # this only happens when the thread as finished processing all transactions and it's the only
-                    # way out of the while True loop (except for successfully finding a complete path)
-                    break
+                    broken += 1
+                    if broken >= 2:
+                        # this only happens when the thread as finished processing all transactions and it's the only
+                        # way out of the while True loop (except for successfully finding a complete path)
+                        break
+                    continue
 
-                txid, rows = x
+                txid, is_input, rows = x
+                if is_input:
+                    context.input_walker.process_input(txid, rows, context.end_addresses)
+                else:
+                    context.output_walker.process_output(txid, rows)
+
                 if context.log_transactions:
                     transaction_logger.info(f"Explored {txid}")
 
                 done_transactions.add(txid)
                 summary.expanded_transactions += 1
-                # rows = session.run(query_template, txid=txid).values()
-                if not rows:
-                    deleted = context.input_walker.remove_path(txid)
-                    continue
-                row = rows[0]
-                ts = row[1]
-                price = get_average_price(ts)
-                for (txid_n, value, address) in row[2]:
-                    if address in context.end_addresses:
-                        logger.info("Found destination")
-                        context.input_walker.expand_node(txid, txid_n, value*price, address)
-                        logger.info(context.input_walker.get_path(txid_n))
-                        return
-                    if not context.input_walker.expand_node(txid, txid_n, value*price, address):
-                        # implies the path is already checked and is therefore dead
-                        to_remove.add(txid)
 
+                intersection = context.input_walker.txids.intersection(context.output_walker.txids)
+                if intersection:
+                    intersect_txid = list(intersection)[0]
+                    logger.info("Found path")
+                    logger.info(context.input_walker.get_path(intersect_txid))
+                    logger.info(context.output_walker.get_path(intersect_txid))
+                    exit(0)
                 # save progress every 6 hours
                 if time.time() - last_save > 60*60*6:
                     logger.info("Saving progress")
@@ -333,17 +483,11 @@ def track_output(driver, context: Context):
                     context.resumed = False
                     last_save = time.time()
 
-            if to_remove:
-                for txid in to_remove:
-                    node = context.input_walker.get_node(txid)
-                    if node and len(context.input_walker.children(txid)) == 0:
-                        logger.debug(f"Removing {txid}")
-                        context.input_walker.remove_path(txid)
-
+            context.input_walker.empty_garbage()
             summary.depth = depth
             context.curr_depth = depth
     finally:
-        logger.info(f"Exited. Expanded a total of {summary.expanded_transactions} transactions up to depth {summary.depth}")
+        logger.info(f"Exited. Expanded a total of {summary.expanded_transactions} transactions up to depth {context.curr_depth}")
 
 
 def resume_tracking(driver, path: str):
@@ -366,20 +510,27 @@ def setup_track_output(driver, start, end, min_amount, max_depth, ignore_entitie
         logger.info("Ignoring paths through entities")
 
     address_to_outputs = {}
-    walker = InputWalker()
+    input_walker = InputWalker()
+    output_walker = OutputWalker()
     with driver.session() as session:
         logger.info(f"Getting addresses of entity {start}")
+        try:
+            int(start)
+            name = "entity_id"
+        except:
+            name = "name"
+
         result = session.run("""
-                MATCH (e:Entity {name: $entityName})--(a:Address)--(o:Output)
+                MATCH (e:Entity {%s: $entityName})--(a:Address)--(o:Output)
                 WITH a.address as address, collect(o.txid_n) as o
                 RETURN address, o
-            """, entityName=start).values()
+            """ % name, entityName=start).values()
 
         for address, outputs in result:
             address_to_outputs[address] = []
             for o in outputs:
                 address_to_outputs[address].append(o)
-                walker.add_root(o)
+                input_walker.add_root(o)
         logger.info(f"Addresses found: {address_to_outputs.keys()}")
         logger.info(f"Getting addresses of entity {end}")
         try:
@@ -388,19 +539,29 @@ def setup_track_output(driver, start, end, min_amount, max_depth, ignore_entitie
         except:
             name = "name"
 
-        end_addresses = session.run("""
-            MATCH (e:Entity {%s: $destination})--(a:Address)
-            RETURN collect(distinct a.address) as addresses
-            """ % name, destination=end).values("addresses")
-        end_addresses = set(end_addresses[0][0])
+        result = session.run("""
+            MATCH (e:Entity {%s: $entityName})--(a:Address)--(o:Output)-[:INPUT]->(t:Transaction)<-[:CONTAINS]-(b:Block)
+                WITH a.address as address, collect([o.txid_n, o.value, t.txid, b.timestamp]) as tuples
+                RETURN address, tuples
+            """ % name, entityName=end).values()
 
-        logger.info(f"Addresses found: {end_addresses}")
+        end_addresses = set([])
+        for address, tuples in result:
+            end_addresses.add(address)
+            address_to_outputs[address] = []
+            for txid_n, value, txid, ts in tuples:
+                if get_average_price(ts) * value < MIN_AMOUNT:
+                    continue
+                address_to_outputs[address].append(txid_n)
+                output_walker.process_output('root', [[txid_n, address, txid]])
+
+        logger.info(f"Addresses found: {list(end_addresses)}")
 
     previous_transactions = set([])
-    ctx = Context(input_walker=walker, transactions=[], previous_transactions=set([]), log_transactions=log_transactions,
+    ctx = Context(input_walker=input_walker, transactions=[], previous_transactions=set([]), log_transactions=log_transactions,
                   address_to_outputs=address_to_outputs, end_addresses=end_addresses, curr_depth=0, max_depth=max_depth,
                   ignore_entities=ignore_entities, resumed=False, done_transactions=set([]), end=end, min_amount=min_amount,
-                  start=start)
+                  start=start, output_walker=output_walker)
 
     setup_logging()
     track_output(driver, ctx)
