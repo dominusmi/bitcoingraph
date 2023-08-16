@@ -1,33 +1,42 @@
 #!/usr/bin/env python
 
 import argparse
+import dataclasses
 import logging
+import pathlib
+import pickle
 import time
 import uuid
 from datetime import datetime
 from queue import Queue
 from threading import Thread
+from typing import List, Set, Dict
 
 import treelib.exceptions
 from neo4j import GraphDatabase
 from treelib import Tree
 
-run_id = uuid.uuid4()
+RUN_ID = uuid.uuid4()
+logger: logging.Logger = None
+transaction_logger: logging.Logger = None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s: %(message)s',
-)
-logger = logging.getLogger("entities")
-logger.setLevel(logging.INFO)
+def setup_logging():
+    global RUN_ID, logger, transaction_logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s: %(message)s',
+    )
+    logger = logging.getLogger("entities")
+    logger.setLevel(logging.INFO)
 
-file_handler = logging.FileHandler(f"track-bitcoin-output-{datetime.utcnow().isoformat()}-{run_id}.log")
-logger.addHandler(file_handler)
+    file_handler = logging.FileHandler(f"track-bitcoin-output-{datetime.utcnow().isoformat()}-{RUN_ID}.log")
+    logger.addHandler(file_handler)
 
-transaction_logger = logging.getLogger("transactions")
-file_handler = logging.FileHandler(f"track-bitcoin-transactions-{run_id}.log")
-transaction_logger.addHandler(file_handler)
-transaction_logger.propagate = False
+    transaction_logger = logging.getLogger("transactions")
+    file_handler = logging.FileHandler(f"track-bitcoin-transactions-{RUN_ID}.log")
+    transaction_logger.addHandler(file_handler)
+    transaction_logger.propagate = False
+
 
 # @profile
 def run_query(session, txid, result_queue, query):
@@ -161,8 +170,185 @@ class Summary:
         self.expanded_transactions = 0
         self.depth = 1
 
-# @profile
-def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log_transactions):
+
+MIN_AMOUNT: int = None
+def thread_function(session, txid):
+    global MIN_AMOUNT
+    logger.debug(f"Running on {txid}")
+    query_template = """
+    MATCH (a:Address)<-[:USES]-(input:Output)-[:INPUT]->(t:Transaction {txid: $txid})<-[:CONTAINS]-(b:Block)
+    WHERE input.value  > $min_value
+    WITH collect([input.txid_n, input.value, a.address]) as tuple, t,b
+    WITH t.txid as txid,b.timestamp as ts,tuple
+    RETURN txid, ts, tuple
+    """
+    try:
+        ts = session.run("MATCH (t:Transaction {txid: $txid})<-[:CONTAINS]-(b:Block) RETURN b.timestamp as ts", txid=txid).single().get("ts")
+    except AttributeError:
+        logger.warning(f"How can {txid} not have a block?!")
+        return None
+    btc_price = get_average_price(ts)
+    result = session.run(query_template, txid=txid, min_value=MIN_AMOUNT/btc_price)
+    return txid, result.values()
+
+@dataclasses.dataclass
+class Context:
+    input_walker: InputWalker
+    # transactions in current batch
+    transactions: List[str]
+    # transactions in current batch that were already processed
+    done_transactions: Set[str]
+    previous_transactions: Set[str]
+    start: str
+    end: str
+    end_addresses: Set[str]
+    address_to_outputs: Dict[str, List[str]]
+    curr_depth: int
+    max_depth: int
+    min_amount: int
+    ignore_entities: bool
+    log_transactions: bool
+    # When the context is created, this should be set to False. Only at the moment of saving should it be temporarily
+    # set to True. This way, when we resume, we can correctly interpret the data
+    resumed: bool
+
+
+
+def track_output(driver, context: Context):
+    global MIN_AMOUNT
+    MIN_AMOUNT=context.min_amount
+
+    logger.info(f"Start walk. Run id: {RUN_ID}")
+    # with driver.session() as session:
+    summary = Summary()
+    last_save = time.time()
+    to_remove = set()
+    previous_transactions = context.previous_transactions
+
+    try:
+        for depth in range(context.curr_depth,context.max_depth):
+            # for txid in walker.get_next_input():
+                # for txid in walker.get_next_input():
+            added_through_entity = 0
+            if not context.ignore_entities and not context.resumed:
+                with driver.session() as session:
+                    query_through_entity = """
+                    MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
+                    WHERE a.address in $addresses
+                    WITH a, count(r) as cr
+                    WHERE cr < 1000
+                    WITH a
+                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
+                    WHERE a <> b 
+                    WITH a, count(r) as cr
+                    WHERE cr < 1000
+                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
+                    RETURN collect(distinct o.txid_n) as txid_n
+                    """
+                    addresses = {l.data["address"] for l in context.input_walker.leaves() if l.data is not None}
+                    if addresses:
+                        logger.debug(f"Getting outputs through entity for {addresses}")
+                        result = session.run(query_through_entity, addresses=list(addresses)).values()
+                        if result and result[0] and result[0][0]:
+                            for o in result[0][0]:
+                                added_through_entity += 1
+                                context.input_walker.add_root(o)
+
+            if context.resumed:
+                transactions = list(set(context.transactions).difference(context.done_transactions))
+            else:
+                context.input_walker.expand_transactions()
+                to_remove = set([])
+                transactions = list(set(context.input_walker.get_next_input()))
+
+                if context.log_transactions:
+                    transaction_logger.info(f"Transactions expanded: {transactions}")
+
+                logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions}. "
+                            f"Expanding {len(transactions)} transactions. Depth: {depth}")
+
+                logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
+                previous_transactions = set(transactions)
+
+            receive_queue = Queue()
+            thread = Thread(target=parallel_execution, args=(driver, thread_function, transactions, receive_queue))
+            thread.start()
+
+            # All the resume setup should be done by now so we're effectively back into "normal" processing
+            context.resumed = False
+
+            done_transactions = set()
+            while True:
+                x = receive_queue.get()
+                if x is None:
+                    break
+                txid, rows = x
+                if context.log_transactions:
+                    transaction_logger.info(f"Explored {txid}")
+
+                done_transactions.add(txid)
+                summary.expanded_transactions += 1
+                # rows = session.run(query_template, txid=txid).values()
+                if not rows:
+                    deleted = context.input_walker.remove_path(txid)
+                    continue
+                row = rows[0]
+                ts = row[1]
+                price = get_average_price(ts)
+                for (txid_n, value, address) in row[2]:
+                    if address in context.end_addresses:
+                        logger.info("Found destination")
+                        context.input_walker.expand_node(txid, txid_n, value*price, address)
+                        logger.info(context.input_walker.get_path(txid_n))
+                        return
+                    if not context.input_walker.expand_node(txid, txid_n, value*price, address):
+                        # implies the path is already checked and is therefore dead
+                        to_remove.add(txid)
+
+                # save progress every 6 hours
+                if time.time() - last_save > 0.01:# 60*60*6:
+                    logger.info("Saving progress")
+                    context.resumed = True
+
+                    # we need to save the current state to avoid re-running all the transactions at current depth
+                    context.previous_transactions = previous_transactions
+                    context.transactions = transactions
+                    context.done_transactions = done_transactions
+                    context.curr_depth = depth
+
+                    with open(f"progress_{RUN_ID}.pickle", "wb+") as f:
+                        pickle.dump(context, f)
+                    context.resumed = False
+                    last_save = time.time()
+
+            if to_remove:
+                for txid in to_remove:
+                    node = context.input_walker.get_node(txid)
+                    if node and len(context.input_walker.children(txid)) == 0:
+                        logger.debug(f"Removing {txid}")
+                        context.input_walker.remove_path(txid)
+
+            summary.depth = depth
+            context.curr_depth = depth
+    finally:
+        logger.info(f"Exited. Expanded a total of {summary.expanded_transactions} transactions up to depth {summary.depth}")
+
+
+def resume_tracking(driver, path: str):
+    global RUN_ID
+    with open(pathlib.Path(path).resolve(), "rb") as f:
+        ctx: Context = pickle.load(f)
+
+    RUN_ID = path.split("_")[1].split(".")[0].strip()
+    setup_logging()
+    logger.info(f"Resuming from {RUN_ID}:\nMin amount: {ctx.min_amount}\nDepth: {ctx.curr_depth}->{ctx.max_depth}\n"
+                f"Log transactions: {ctx.log_transactions}\nIgnore entities: {ctx.ignore_entities}")
+    track_output(driver, ctx)
+
+def setup_track_output(driver, start, end, min_amount, max_depth, ignore_entities, log_transactions):
+    global MIN_AMOUNT
+    MIN_AMOUNT = min_amount
+    setup_logging()
     logger.info(f"Finding bitcoin trail {end}->{start}. Minimum transaction amount: {min_amount}$")
     if ignore_entities:
         logger.info("Ignoring paths through entities")
@@ -172,10 +358,10 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
     with driver.session() as session:
         logger.info(f"Getting addresses of entity {start}")
         result = session.run("""
-            MATCH (e:Entity {name: $entityName})--(a:Address)--(o:Output)
-            WITH a.address as address, collect(o.txid_n) as o
-            RETURN address, o
-        """, entityName=start).values()
+                MATCH (e:Entity {name: $entityName})--(a:Address)--(o:Output)
+                WITH a.address as address, collect(o.txid_n) as o
+                RETURN address, o
+            """, entityName=start).values()
 
         for address, outputs in result:
             address_to_outputs[address] = []
@@ -191,119 +377,21 @@ def track_output(driver, start, end, min_amount, max_depth, ignore_entities, log
             name = "name"
 
         end_addresses = session.run("""
-        MATCH (e:Entity {%s: $destination})--(a:Address)
-        RETURN collect(distinct a.address) as addresses
-        """ % name, destination=end).values("addresses")
+            MATCH (e:Entity {%s: $destination})--(a:Address)
+            RETURN collect(distinct a.address) as addresses
+            """ % name, destination=end).values("addresses")
         end_addresses = set(end_addresses[0][0])
 
         logger.info(f"Addresses found: {end_addresses}")
 
-
-    query_template = """
-    MATCH (a:Address)<-[:USES]-(input:Output)-[:INPUT]->(t:Transaction {txid: $txid})<-[:CONTAINS]-(b:Block)
-    WHERE input.value  > $min_value
-    WITH collect([input.txid_n, input.value, a.address]) as tuple, t,b
-    WITH t.txid as txid,b.timestamp as ts,tuple
-    RETURN txid, ts, tuple
-    """
-
-    def thread_function(session, txid):
-        logger.debug(f"Running on {txid}")
-        try:
-            ts = session.run("MATCH (t:Transaction {txid: $txid})<-[:CONTAINS]-(b:Block) RETURN b.timestamp as ts", txid=txid).single().get("ts")
-        except AttributeError:
-            logger.warning(f"How can {txid} not have a block?!")
-            return None
-        btc_price = get_average_price(ts)
-        result = session.run(query_template, txid=txid, min_value=min_amount/btc_price)
-        return txid, result.values()
-
     previous_transactions = set([])
-    logger.info("Start walk")
-    # with driver.session() as session:
-    summary = Summary()
-    try:
-        for depth in range(1,max_depth):
-            # for txid in walker.get_next_input():
-                # for txid in walker.get_next_input():
-            added_through_entity = 0
-            if not ignore_entities:
-                with driver.session() as session:
-                    query_through_entity = """
-                    MATCH (a:Address)<-[:OWNER_OF]-()-[r:OWNER_OF]->()
-                    WHERE a.address in $addresses
-                    WITH a, count(r) as cr
-                    WHERE cr < 1000
-                    WITH a
-                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[r:USES]-()
-                    WHERE a <> b 
-                    WITH a, count(r) as cr
-                    WHERE cr < 1000
-                    MATCH (a)<-[:OWNER_OF]-()-[:OWNER_OF]->(b:Address)<-[:USES]-(o:Output)
-                    RETURN collect(distinct o.txid_n) as txid_n
-                    """
-                    addresses = {l.data["address"] for l in walker.leaves() if l.data is not None}
-                    if addresses:
-                        logger.debug(f"Getting outputs through entity for {addresses}")
-                        result = session.run(query_through_entity, addresses=list(addresses)).values()
-                        if result and result[0] and result[0][0]:
-                            for o in result[0][0]:
-                                added_through_entity += 1
-                                walker.add_root(o)
+    ctx = Context(input_walker=walker, transactions=[], previous_transactions=set([]), log_transactions=log_transactions,
+                  address_to_outputs=address_to_outputs, end_addresses=end_addresses, curr_depth=0, max_depth=max_depth,
+                  ignore_entities=ignore_entities, resumed=False, done_transactions=set([]), end=end, min_amount=min_amount,
+                  start=start)
 
-
-            walker.expand_transactions()
-            to_remove = set([])
-            transactions = list(set(walker.get_next_input()))
-
-            if log_transactions:
-                transaction_logger.info(f"Transactions expanded: {transactions}")
-
-            logger.info(f"Total transactions expanded up to now: {summary.expanded_transactions}. "
-                        f"Expanding {len(transactions)} transactions. Depth: {depth}")
-
-            logger.debug(f"TX in common: {len(previous_transactions.intersection(set(transactions)))}")
-            previous_transactions = set(transactions)
-            receive_queue = Queue()
-            thread = Thread(target=parallel_execution, args=(driver, thread_function, transactions, receive_queue))
-            thread.start()
-            while True:
-                x = receive_queue.get()
-                if x is None:
-                    break
-                txid, rows = x
-                if log_transactions:
-                    transaction_logger.info(f"Explored {txid}")
-
-                summary.expanded_transactions += 1
-                # rows = session.run(query_template, txid=txid).values()
-                if not rows:
-                    deleted = walker.remove_path(txid)
-                    continue
-                row = rows[0]
-                ts = row[1]
-                price = get_average_price(ts)
-                for (txid_n, value, address) in row[2]:
-                    if address in end_addresses:
-                        logger.info("Found destination")
-                        walker.expand_node(txid, txid_n, value*price, address)
-                        logger.info(walker.get_path(txid_n))
-                        return
-                    if not walker.expand_node(txid, txid_n, value*price, address):
-                        # implies the path is already checked and is therefore dead
-                        to_remove.add(txid)
-
-            if to_remove:
-                for txid in to_remove:
-                    node = walker.get_node(txid)
-                    if node and len(walker.children(txid)) == 0:
-                        logger.debug(f"Removing {txid}")
-                        walker.remove_path(txid)
-
-            summary.depth = depth
-    finally:
-        logger.info(f"Exited. Expanded a total of {summary.expanded_transactions} transactions up to depth {summary.depth}")
-
+    setup_logging()
+    track_output(driver, ctx)
 
 def get_average_price(timestamp):
     data = {
@@ -335,8 +423,9 @@ parser = argparse.ArgumentParser(
                 "Keep in mind it knows which to call based on whether the id can be converted to an integer, so if you provide "
                 "a name which is actually a number, it will try to get the entity with that entity_id instead of name."
 )
-parser.add_argument('receiver', help="Entity name or id receiving the bitcoins")
-parser.add_argument('owner', help="Entity name or id sending the bitcoins")
+parser.add_argument('receiver', help="Entity name or id receiving the bitcoins", nargs="?")
+parser.add_argument('owner', help="Entity name or id sending the bitcoins", nargs="?")
+parser.add_argument('--resume-path', help='Progress file from which to resume', required=False)
 parser.add_argument('--host', default="0.0.0.0", help='Neo4j host')
 parser.add_argument('--port', default=7687, help='Neo4j port', type=int)
 parser.add_argument('-u', '--username', required=True, help='Neo4j user')
@@ -352,9 +441,17 @@ parser.add_argument("--log-transactions", action="store_true",
 
 if __name__ == "__main__":
     args = parser.parse_args()
+    if (args.receiver is None or args.owner is None) and args.resume_path is None:
+        print("You must either pass receiver and owner, or a resume path")
+        exit(1)
+
     driver = GraphDatabase.driver(f"bolt://{args.host}:{args.port}",
                                   auth=(args.username, args.password),
                                   connection_timeout=3600)
 
-    track_output(driver, args.receiver, args.owner,  args.min_amount_dollars, args.max_depth, args.ignore_entities,
-                 args.log_transactions)
+    if args.resume_path:
+        resume_tracking(driver, args.resume_path)
+    else:
+        setup_track_output(driver, args.receiver, args.owner, args.min_amount_dollars, args.max_depth, args.ignore_entities,
+                       args.log_transactions)
+
