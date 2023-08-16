@@ -306,7 +306,7 @@ def track_output(driver, context: Context):
                         to_remove.add(txid)
 
                 # save progress every 6 hours
-                if time.time() - last_save > 0.01:# 60*60*6:
+                if time.time() - last_save > 60*60*6:
                     logger.info("Saving progress")
                     context.resumed = True
 
