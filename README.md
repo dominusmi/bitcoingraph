@@ -12,14 +12,14 @@ This fork contains large refactorings. On the compatibility side, the addresses 
 same format as they used to by bitcoind service (see https://github.com/btcsuite/btcd/issues/1874).
 However, a much larger problem was the entity computation. The previous script was made in 2015, with the 
 entire blockchain weighting a few GBs. Nowadays, it weights close to 1TB. The script was not adapted to 
-this modern issue, and would require hundreds of GBs (we stopped testing after 200GB, the exact number is unknown).
+this modern issue, and would require hundreds of GBs (we stopped testing after 200GB RAM, the exact number is unknown).
 
 This required a complete overhaul of the entity computation. The script now contains arguments to limit the amount 
-of memory used, meaning you can probably run it on 16GB (I wouldn't personally, but it will work). There's a section
+of memory used, meaning you can probably run it on 16GB RAM (I wouldn't personally, but it will work). There's a section
 below regarding requirements and giving more details.
 
 
-## Prerequesites
+## Prerequisites
 
 ### OS Note
 The code can only be run on UNIX compatible systems, as it makes use of `sort` and `uniq` terminal commands. 
@@ -27,86 +27,11 @@ The newer versions were only tested on linux, but the modifications made should 
 It was not tested on windows, it will not work on "native" windows, but could potentially work if run through 
 some linux virtualisation (e.g. WSL) or some UNIX terminal system.
 
-### Bitcoin Core setup and configuration
+### Mac OSX specifics
 
-First, install the current version of Bitcoin Core (v.11.1), either from [source](https://github.com/bitcoin/bitcoin) or
-from a [pre-compiled executable](https://bitcoin.org/en/download).
+Running bitcoingraph on a Mac requires coreutils to be installed
 
-Once installed, you'll have access to three programs: `bitcoind` (= full peer), `bitcoin-qt` (= peer with GUI),
-and `bitcoin-cli` (RPC command line interface). The following instructions have been tested with `bitcoind` and assume
-you can start and run a Bitcoin Core peer as follows:
-
-    bitcoind -printtoconsole
-
-Second, you must make sure that your bitcoin client accepts JSON-RPC connections by modifying
-the [Bitcoin Core configuration file][bc_conf] as follows:
-
-    # server=1 tells Bitcoin-QT to accept JSON-RPC commands.
-    server=1
-
-    # You must set rpcuser and rpcpassword to secure the JSON-RPC api
-    rpcuser=your_rpcuser
-    rpcpassword=your_rpcpass
-
-    # How many seconds bitcoin will wait for a complete RPC HTTP request.
-    # after the HTTP connection is established.
-    rpctimeout=30
-
-    # Listen for RPC connections on this TCP port:
-    rpcport=8332
-    
-    # Index non-wallet transactions (required for fast txn and block lookups)
-    txindex=1
-
-    # Enable unauthenticated REST API
-    rest=
-
-Test whether the JSON-RPC interface is working by starting your Bitcoin Core peer (...waiting until it finished
-startup...) and using the following cURL request (with adapted username and password):
-
-    curl --data-binary '{"jsonrpc": "1.0", "id":"curltext", "method": "getblockchaininfo", "params": [] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/
-
-Third, since Bitcoingraph needs to access non-wallet blockchain transactions by their ids, you need to enable the
-transaction index in the Bitcoin Core database. This can be achieved by adding the following property to
-your `bitcoin.conf`
-
-    txindex=1
-
-... and restarting your Bitcoin core peer as follows (rebuilding the index can take a while):
-
-    bitcoind -reindex
-
-Test non-wallet transaction data access by taking an arbitrary transaction id and issuing the following request using
-cURL:
-
-    curl --data-binary '{"jsonrpc": "1.0", "id":"curltext", "method": "getrawtransaction", "params": ["110ed92f558a1e3a94976ddea5c32f030670b5c58c3cc4d857ac14d7a1547a90", 1] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/
-
-Finally, bitcoingraph also makes use of Bitcoin Core's HTTP REST interface, which is enabled using the following
-parameter:
-
-    bitcoind -rest
-
-Test it using some sample block hash
-
-    http://localhost:8332/rest/block/000000000000000e7ad69c72afc00dc4e05fc15ae3061c47d3591d07c09f2928.json
-
-When you reached this point, your Bitcoin Core setup is working. Terminate all running bitcoind instances and launch a
-new background daemon with enabled REST interface
-
-    bitcoind -daemon -rest
-
-### Bitcoingraph library setup
-
-Bitcoingraph is being developed in Python 3.9 Make sure it is running on your machine:
-
-    python --version
-
-...test and install the Bitcoingraph library:
-
-    cd bitcoingraph
-    pip install -r requirements.txt
-    py.test
-    python setup.py install
+    homebrew install coreutils
 
 ### Hardware
 
@@ -134,19 +59,32 @@ to eight cores, also depending on the speed of your CPU.
 
 **RAM**: This is the most expensive part of this operation. For a full blockchain import (July 2023) into neo4j you will
 need at least 48 GB of RAM, most likely even more. The original bcgraph-compute-entities
-from [source](https://github.com/behas/bitcoingraph/tree/master/scripts) consumed 230 GB of RAM for an entities
+from [source](https://github.com/behas/bitcoingraph/tree/master/scripts) consumed more than 230 GB of RAM for an entities
 computation of blocks 0-675000. The current version can do the same job with about 60 GB of RAM. You can
-try to tweak this back and fro for some marginal gains, but you will never achieve any acceptable speed on a low-memory
+try to tweak this back and for some marginal gains, but you will never achieve any acceptable speed on a low-memory
 system. Or any results at all, other than a crash, without altering the code. A wet-finger-in-the-air recommendation is
 64 GB of RAM at the very least, preferably more.
 
-### Mac OSX specifics
+### Software
 
-Running bitcoingraph on a Mac requires coreutils to be installed
+You will need neo4j >= 5.0 , python >= 3.9 with additional modules, PyPy, rust, and of course bitcoingraph. 
+If you do not have access to an RPC Bitcoin API, you will need to run your own Bitcoin node.
+Please refer to the section in the appendix for instructions.
 
-    homebrew install coreutils
+#### Bitcoingraph library setup
 
-## What it creates
+Bitcoingraph is being developed in Python 3.9 Make sure it is running on your machine:
+
+    python --version
+
+Download and unpack or git clone, test and install the Bitcoingraph library:
+
+    cd bitcoingraph
+    pip install -r requirements.txt
+    py.test
+    python setup.py install
+
+# What it creates
 
 ## Visualisation
 
@@ -162,7 +100,7 @@ Running bitcoingraph on a Mac requires coreutils to be installed
 
 - `Output`: Output created from a transaction, which is then used as input for a later transaction. Contains the
   property `txid_n`, where `n` is the index of the output, and float `value` as the BTC value. A transaction `123` with
-  2 outputs will create two nodes `123_1` and `123_2` both attached as in the outward direction
+  2 outputs will create two nodes `123_0` and `123_1` both attached as in the outward direction
 
   ```(:Transaction)-[:OUTPUT]->(:Output)```
 
@@ -183,6 +121,7 @@ Running bitcoingraph on a Mac requires coreutils to be installed
         - an entity is created connecting these addresses, `e1`
     - Transaction `t2` receives inputs from addresses `a2`,`a4`
         - since `a2` is already part of an entity, then `a4` is added to that same entity `e1`
+        - if `a4` was also already part of an entity, the two entities are merged into one
 
 ## Boostrapping the underlying graph database (Neo4J)
 
@@ -193,7 +132,7 @@ described by [Ron and Shamir](https://eprint.iacr.org/2012/584.pdf), and ingesti
 #### Important note
 When we took over this project, it had last been used on data from 2016. We had to entirely 
 re-write parts of the codebase due to the fact that the total bitcoin blockchain size at the time was
-a couple of GBs, whereas nowadays it's closer to 1TB. Many of the processes were not adapted for the size.
+a couple of GBs, whereas nowadays, it's closer to 1TB. Many of the processes were not adapted for the size.
 
 I would strongly suggest anyone wanting to do this on the real blockchain, to first do the whole process
 at small scale. Using only the first 200k blocks, the entire process can be done on any average modern laptop in less 
@@ -239,7 +178,7 @@ There are various parameters that can be tuned to optimize performance:
 `--cached-batches`: Number of last processed batches to keep in memory (uses a circular buffer)
 
 `--max-queue-size`: Number of outputs to process together. This is the most important variable
-both in terms of performance and memory usage. The higher the better.
+both in terms of performance and memory usage. The higher, the better.
 
 On our machine with 110G and AMD Ryzen 5 5600G, we used the following parameters:
 ```commandline
@@ -260,7 +199,7 @@ file, it wrongly creates two entities. That's the reason for merge-entities scri
 which is written in `rust` for performance purposes and merged all entities that 
 were separated back together. The second argument is the output file, in theory it can 
 be the same as the input, but what we used (and is used throughout this README) is simply
-adding the _merged suffix.
+adding the \_merged suffix.
 
 
 Two additional files are created:
@@ -292,19 +231,35 @@ bcgraph-pk-to-addresses -i blocks_0_1000
 
 ### Step 4: Ingest pre-computed dump into Neo4J
 
-Download and install [Neo4J][neo4j] community edition (>= 5.0.0):
+Install [Neo4J][neo4j] community edition (>= 5.0.0):
 
-    tar xvfz neo4j-community-2.3.0-unix.tar.gz
+Get an rpm, deb or tar directly from [neo4j]https://neo4j.com/download-center/#community 
+or, preferably, install a [dnf]https://yum.neo4j.com/ or [apt]https://debian.neo4j.com/ 
+repo as appropriate for your distribution. The dnf/apt method has the additional advantage 
+of easy upgrades without the risk of accidentally overwriting your configuration files. 
 
-Test Neo4J installation:
+Edit neo4j.conf as needed. If you plan to import the entire blockchain, you will probably
+need to set 
 
-    sudo neo4j start
+server.directories.data=/path/to/3TB/of/free/space/neo4j/data
+
+The last two directories of the above path must be owned by the neo4j user. 
+
+Before you start neo4j for the first time, you can set an initial password with 
+
+`neo4j-admin dbms set-initial-password <password> [--require-password-change]`
+
+Test the Neo4J installation:
+
+    systemctl start neo4j
     http://localhost:7474/
 
-Install and make sure is not running and pre-existing databases are removed:
+Stop the database and remove any pre-existing databases:
 
-    sudo neo4j stop
+    systemctl stop neo4j
     sudo rm -rf /var/lib/neo4j/data/*
+
+Note: this will also delete your initial password. Set it again as needed. 
 
 Switch back into the dump directory and create a new database using Neo4J's CSV importer tool:
 
@@ -318,15 +273,17 @@ neo4j-admin database import full --overwrite-destination
   --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv 
   --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv 
   --relationships=INPUT=rel_input_header.csv,rel_input.csv 
-  --relationships=USES=rel_output_address_header.csv,rel_output_address_merged.csv 
+  --relationships=USES=rel_output_address_header.csv,rel_output_address.csv 
   --nodes=:Entity=entity_header.csv,entity.csv 
-  --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address.csv  
+  --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address_merged.csv  
   --relationships=GENERATES=rel_address_address_header.csv,rel_address_address.csv 
   <database name>
 ```
-Then, start the Neo4J shell...:
+If you did the import as any user other than neo4j, `chown -R neo4j:neo4j /path/to/neo4j/data`. 
+Then, start neo4j and the Cypher shell...:
 
-    $NEO4J_HOME/bin/neo4j-shell -path $NEO4J_HOME/data
+    `systemctl start neo4j`
+    `cypher-shell -u <username> -p <password> -d <database>`
 
 and create the following indexes:
 
@@ -351,25 +308,11 @@ and create the following indexes:
     CREATE INDEX FOR (e:Entity) ON (e.name);
 ```
 
-Finally start Neo4J
+Finally, start Neo4J
 
-    sudo neo4j start
+    systemctl start neo4j
 
-### Step 4: Enrich transaction graph with identity information
-
-Some bitcoin addresses have associated public identity information. Bitcoingraph provides an example script which
-collects information from blockchain.info.
-
-    utils/identity_information.py
-
-The resulting CSV file can be imported into Neo4j with the Cypher statement:
-
-    LOAD CSV WITH HEADERS FROM "file://<PATH>/identities.csv" AS row
-    MERGE (a:Address {address: row.address})
-    CREATE a-[:HAS]->(i:Identity
-      {name: row.tag, link: row.link, source: "https://blockchain.info/"})
-
-### Step 5: Enable synchronization with Bitcoin block chain
+### Step 4: Enable synchronization with Bitcoin block chain
 
 Bitcoingraph provides a synchronisation script, which reads blocks from bitcoind and writes them into Neo4j. It is
 intended to be called by a cron job which runs daily or more frequent. For performance reasons it is no substitution for
@@ -435,6 +378,88 @@ WHERE connected_a <> a
 RETURN a.address, sum(o.value)+sum(connected_o.value)
 ```
 
+## Appendix
+
+
+### Using your own Bitcoin node 
+
+If you don't have access to an external RPC Bitcoin API, then you will need to run
+your own node. Here are the instructions.
+
+#### Bitcoin Core setup and configuration
+
+First, install the current version of Bitcoin Core: 
+
+`dnf install \'bitcoin-core\*\'`
+`apt-get install bitcoind bitcoin-qt bitcoin-tx`
+
+Make sure the version is `bitcoind >= 0.22`
+
+You can also install from [source](https://github.com/bitcoin/bitcoin) or from a 
+[pre-compiled executable](https://bitcoin.org/en/download) if you are so inclined.
+
+Once installed, you'll have access to three programs: `bitcoind` (= full peer), `bitcoin-qt` (= peer with GUI),
+and `bitcoin-cli` (RPC command line interface). 
+
+Depending on how you installed bitcoind, you will find a sample configuration 
+file somewhere, perhaps as /usr/share/doc/bitcoin-core-server/bitcoin.conf.example. 
+Place a copy of it in $HOME/.bitcoin/bitcoin.conf as the user who will run 
+bitcoind and edit it at least as follows:
+
+    # server=1 tells Bitcoin-QT to accept JSON-RPC commands.
+    server=1
+
+    # You must set rpcauth to secure the JSON-RPC api. rpcauth and rpcpassword 
+    # are obsolete. Use rcpauth.py from your bitcoind installation or from 
+    # [github]https://github.com/bitcoin/bitcoin/blob/master/share/rpcauth/rpcauth.py 
+    # to create the password hash. 
+    #rpcuser=your_rpcuser 
+    #rpcpassword=your_rpcpass
+    rcpauth=your_rpcuser:password_hash
+
+    # How many seconds bitcoin will wait for a complete RPC HTTP request.
+    # after the HTTP connection is established.
+    rpctimeout=300
+
+    # Listen for RPC connections on this TCP port:
+    rpcport=8332
+    
+    # Index non-wallet transactions (required for fast txn and block lookups)
+    txindex=1
+
+    # Enable unauthenticated REST API
+    rest=1
+
+    # Do NOT enable pruning
+    prune=0
+
+    # Configure this if you don't have 800-900 GB free space in the 
+    # bitcoind user's home directory
+    datadir=/path/to/lots/of/free/space
+
+If you already had a working bitcoind with some blocks but without indexing, 
+run `bitcoind -reindex` before anything else.
+
+Now you should be able to start and run a Bitcoin Core peer as follows:
+
+    `bitcoind -printtoconsole`
+
+Test whether the JSON-RPC interface is working by starting your Bitcoin Core peer (...waiting until it finished
+startup...) and using the following cURL request (with adapted username and password):
+
+    `curl --data-binary '{"jsonrpc": "1.0", "id":"curltext", "method": "getblockchaininfo", "params": [] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/`
+
+Test non-wallet transaction data access by taking an arbitrary transaction id and issuing the following request:
+
+    `curl --data-binary '{"jsonrpc": "1.0", "id":"curltext", "method": "getrawtransaction", "params": ["110ed92f558a1e3a94976ddea5c32f030670b5c58c3cc4d857ac14d7a1547a90", 1] }' -H 'content-type: text/plain;' http://your_rpcuser:your_rpcpass@localhost:8332/`
+
+Test the REST interface using some sample block hash
+
+    http://localhost:8332/rest/block/000000000000000e7ad69c72afc00dc4e05fc15ae3061c47d3591d07c09f2928.json
+
+When you have reached this point, your Bitcoin Core setup is working. You can let it run on, 
+or relaunch it as a background daemon with `bitcoind -daemon`.
+
 ## License
 
 This original library is released under the [MIT license](http://opensource.org/licenses/MIT). All changes on this fork
@@ -445,3 +470,4 @@ are released under [GPL 3 license](https://www.gnu.org/licenses/gpl-3.0.html)
 [bc_conf]: https://en.bitcoin.it/wiki/Running_Bitcoin#Bitcoin.conf_Configuration_File "Bitcoin Core configuration file"
 
 [neo4j]: http://neo4j.com/ "Neo4J"
+
