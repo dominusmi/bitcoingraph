@@ -522,6 +522,9 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
         # if len(address_group) > 1:
         #     entity_grouping.update_from_address_group(list(address_group))
 
+        if interchunk_transaction_group:
+            queued_output_groups.append(interchunk_transaction_group[1])
+
         if queued_output_groups:
             processed = process_queue(queued_output_groups, cache, output_address_iterator, input_path)
             count_tx += processed
