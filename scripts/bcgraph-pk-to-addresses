@@ -66,10 +66,12 @@ if __name__ == "__main__":
     chunk_size = args.read_size
     started_processing_pk = False
 
-    # Since we need to append to rel_address_address.csv within this run,
-    # we must first remove any leftovers from a previous run.
-    if os.path.isfile(path.joinpath("rel_address_address.csv")):
-        os.remove(path.joinpath("rel_address_address.csv"))
+    with open(path.joinpath("pk2addresses.csv"), "w+") as _:
+        pass
+    with open(path.joinpath("new_addresses.csv"), "w+") as _:
+        pass
+    with open(path.joinpath("rel_address_address.csv"), "w+") as _:
+        pass
 
     with open(path.joinpath("addresses.csv"), "r") as fa:
         # instead of writing every relationship one at a time, we write them in batches
@@ -114,15 +116,40 @@ if __name__ == "__main__":
     print("Reading pk2pkh addresses")
     with open(path.joinpath("rel_address_address.csv"), "r") as fr:
         for line_number, line in enumerate(line_reader(fr, chunk_size)):
-            address = line.rsplit(",", 1)[-1] + "\n"
+            address = line.rsplit(",", 1)[-1]
             pkh_addresses.append(address)
             pk_lines += 1
     fr.close()
 
+    print("Finding duplicate addresses")
+    pkh_addresses.sort()
+    to_remove = []
+    with open(path.joinpath("addresses.csv")) as f:
+        read_address = f.readline().strip()
+        file_has_content = True
+        for i,address in enumerate(pkh_addresses):
+            while file_has_content:
+                if read_address == address:
+                    to_remove.append(i)
+                    break
+                elif read_address > address:
+                    break
+
+                read_address = f.readline().strip()
+                if len(read_address) == 0:
+                    file_has_content = False
+
+    print(f"Found {len(to_remove)} addresses to remove")
+    for i in reversed(to_remove):
+        pkh_addresses.pop(i)
+
+
     print("Writing pk2pkh addresses")
     with open(path.joinpath("pk2addresses.csv"), "w") as pka:
-        pka.writelines(pkh_addresses)
+        pka.writelines((addr+"\n" for addr in pkh_addresses))
     pka.close()
+
+
 
     print("Appending pk2pkh addresses to addresses")
     addrfiles = [path.joinpath("addresses.csv"), path.joinpath("pk2addresses.csv")]
@@ -131,9 +158,13 @@ if __name__ == "__main__":
             with open(af,'rb') as fd:
                 shutil.copyfileobj(fd, ba)
 
+    print("Keep original addresses.csv in case of error as addresses.csv.original")
+    shutil.move(path.joinpath("addresses.csv"), path.joinpath("addresses.csv.original"))
+    shutil.move(path.joinpath("new_addresses.csv"), path.joinpath("addresses.csv"))
     # Sanity check and completion
-    # print("pklines: " + str(pklines)  + " addresslines: " + str(addresses))
+    # print("pklines: " + str(pk_lines)  + " addresslines: " + str(addresses))
     # if not addresses.csv lines + pk2addresses.csv lines == new_addresses.csv lines:
+    #     print("Something went wrong")
     #    break
     # else
     #    sort unique new_addresses.csv
