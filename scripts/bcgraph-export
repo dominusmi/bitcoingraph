@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from bitcoingraph import BitcoinGraph
+from bitcoingraph.bitcoingraph import BitcoinGraph
 from bitcoingraph.bitcoind import SSHTunnel
 
 

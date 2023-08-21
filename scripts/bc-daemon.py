@@ -5,7 +5,7 @@ from time import sleep
 
 import neo4j
 
-from bitcoingraph import BitcoinGraph
+from bitcoingraph.bitcoingraph import BitcoinGraph
 from bitcoingraph.address import fetch_addresses_by_block, generate_from_address_list, \
     save_generated_addresses
 from bitcoingraph.blockchain import BlockchainException

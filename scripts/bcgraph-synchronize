@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import argparse
-from bitcoingraph import BitcoinGraph
+
+from bitcoingraph.bitcoingraph import BitcoinGraph
 
 parser = argparse.ArgumentParser(
     description='Synchronise database with blockchain')
