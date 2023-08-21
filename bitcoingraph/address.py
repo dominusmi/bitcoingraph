@@ -14,9 +14,8 @@ def fetch_addresses_by_block(session: neo4j.Session, start_height, max_height) -
     """
     query = """
         MATCH (b:Block)
-        WHERE b.height >= $lower AND b.height < $higher
+        WHERE b.height >= $lower AND b.height <= $higher
         WITH b
-        LIMIT $higher-$lower
         MATCH (b)-[:CONTAINS]->(t)-[:OUTPUT]->(o)-[:USES]->(a)
         WHERE a.address STARTS WITH "pk_" AND NOT EXISTS((a)-[:GENERATES]->())
         RETURN collect(distinct a.address) as addresses

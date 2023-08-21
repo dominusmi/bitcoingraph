@@ -104,6 +104,7 @@ class Blockchain:
             raw_tx_data = self._bitcoin_proxy.getrawtransaction(tx_id)
             return Transaction(self, json_data=raw_tx_data)
         except BitcoindException as exc:
+            print(exc)
             raise BlockchainException('Cannot retrieve transaction with id {}'.format(tx_id), exc)
 
     def get_transactions(self, tx_ids):

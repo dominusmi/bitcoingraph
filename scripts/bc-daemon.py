@@ -39,19 +39,18 @@ parser.add_argument('-b', '--max-blocks', type=int, default=1_000_000_000_000,
                     help='Enforce a limit on the number of blocks that are synchronised')
 
 
-def thread_synchronization(bcgraph: BitcoinGraph, max_blocks: int, queue_new_block: queue.Queue,
+def thread_synchronization(bcgraph: BitcoinGraph, max_height: int, queue_new_block: queue.Queue,
                            queue_stop: queue.Queue):
 
     while True:
-        # This loop stop as soon as no more blocks are available
         try:
-            for height in bcgraph.synchronize(max_blocks):
-                queue_new_block.put(height)
-                if not queue_stop.empty():
-                    return
+            # check whether we received a stop signal from the daemon
+            if not queue_stop.empty():
+                return
 
-            queue_new_block.put(None)
-            break
+            for height in bcgraph.synchronize(max_height):
+                queue_new_block.put(height)
+
         except BlockchainException as e:
             print(f"Blockchain error: {e}. Trying again soon")
 
@@ -63,6 +62,7 @@ def thread_synchronization(bcgraph: BitcoinGraph, max_blocks: int, queue_new_blo
             # try again in 5 seconds
             sleep(5)
 
+    queue_new_block.put(None)
 
 def thread_wrapper(f, data_queue: queue.Queue, stop_queue: queue.Queue):
     while True:
@@ -190,6 +190,7 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
                     break
             except KeyboardInterrupt:
                 sync_stop_queue.put(True)
+                post_process_stop_queue.put(True)
                 stop_signal = True
                 print("Sent stop signal")
 
