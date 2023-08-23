@@ -73,9 +73,17 @@ if __name__ == "__main__":
     with open(path.joinpath("rel_address_address.csv"), "w+") as _:
         pass
 
+    with open(path.joinpath("rel_entity_address.csv")) as f:
+        f.seek(0,os.SEEK_END)
+        f.seek(f.tell()-500)
+        lines = f.readlines()
+        current_entity_id = int(lines[-1].split(",")[0]) + 1
+
+
     with open(path.joinpath("addresses.csv"), "r") as fa:
         # instead of writing every relationship one at a time, we write them in batches
-        batch_write = []
+        batch_write_rel_address_address = []
+        batch_write_rel_entity_address = []
         for line_number, line in enumerate(line_reader(fa, chunk_size)):
             if line.startswith("pk_"):
                 if line.endswith("CHECKSIG"):
@@ -94,21 +102,32 @@ if __name__ == "__main__":
                     continue
 
                 p2pkh = get_p2pkh(key)
-                batch_write.append(f"{line},{p2pkh}")
-
                 p2wpkh = get_p2wpkh(key)
-                batch_write.append(f"{line},{p2wpkh}")
+                batch_write_rel_address_address.extend([
+                    f"{line},{p2pkh}", f"{line},{p2wpkh}"
+                ])
+                batch_write_rel_entity_address.extend([
+                    f"{current_entity_id},{line}",
+                    f"{current_entity_id},{p2pkh}",
+                    f"{current_entity_id},{p2wpkh}"
+                ])
+                current_entity_id += 1
 
-            if line_number and batch_write and line_number % batch_size == 0:
+            if line_number and batch_write_rel_address_address and line_number % batch_size == 0:
                 date = datetime.datetime.utcnow()
                 print(f'{date.strftime("%Y-%m-%d %H:%M:%S")} Processed {line_number} addresses')
-                with open(path.joinpath("rel_address_address.csv"), "a") as output:
-                    output.write("\n".join(batch_write) + "\n")
-                batch_write = []
 
-        if batch_write:
+                with open(path.joinpath("rel_address_address.csv"), "a") as output:
+                    output.write("\n".join(batch_write_rel_address_address) + "\n")
+
+                with open(path.joinpath("rel_entity_address.csv"), "a") as output:
+                    output.write("\n".join(batch_write_rel_entity_address) + "\n")
+                batch_write_rel_address_address = []
+                batch_write_rel_entity_address = []
+
+        if batch_write_rel_address_address:
             with open(path.joinpath("rel_address_address.csv"), "a") as output:
-                output.write("\n".join(batch_write) + "\n")
+                output.write("\n".join(batch_write_rel_address_address) + "\n")
     fa.close()
 
     pkh_addresses = []
