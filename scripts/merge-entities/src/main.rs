@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::collections::HashSet;
-use std::time::{Instant, Duration};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 struct UnionFind {
     pub parent: HashMap<usize, usize>,
@@ -67,6 +67,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut uf = UnionFind::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
 
+    let mut tmp_lines_path = format!("/tmp/merge_entities_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis());
+    let mut tmp = BufWriter::new(&tmp_lines_path);
+
     let start_time = Instant::now();
     for (index, line) in reader.lines().enumerate() {
         let line = line?;
@@ -83,19 +86,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             uf.union(*first_idx, idx);
         } else {
             idx_map.insert(str.clone(), idx);
-            lines.push((idx, str));
+            // lines.push((idx, str));
+            write!(tmp, "{},{}\n", idx, str)?;
         }
         if index>0 && index % 10_000_000 == 0{
             println!("Processed {:?} lines in {:?} seconds", &index, &start_time.elapsed().as_secs());
         }
     }
+    tmp.flush()?;
 
     let output_file = File::create(&output_path)?;
     let mut writer = BufWriter::new(output_file);
 
     println!("Done processing lines. Writing new file.");
     let mut start_write = Instant::now();
-    for (idx, str) in lines {
+
+    let tmp_lines_reader = BufReader::new(&tmp_lines_path);
+    for line in tmp_lines_reader.lines() {
+        let parts: Vec<&str> = line.unwrap().split(",").collect();
+        let idx = parts[0].parse()?;
+        let str = parts[1];
         let new_idx = uf.find(idx);
         write!(writer, "{},{}\n", new_idx, str)?;
 
