@@ -278,8 +278,11 @@ class DBTransaction(Neo4jController):
         self.tx = tx
         return self
 
-    def __exit__(self, type, value, traceback):
-        self.tx.commit()
+    def __exit__(self, exception_type, value, traceback):
+        if exception_type is None:
+            self.tx.commit()
+        else:
+            self.tx.rollback()
         self.tx.close()
         self.session.close()
 

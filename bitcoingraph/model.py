@@ -143,7 +143,11 @@ class Transaction:
         self.__outputs = transaction.outputs
 
     def is_coinbase(self):
-        return self.inputs[0].is_coinbase
+        try:
+            return self.inputs[0].is_coinbase
+        except Exception:
+            print(f"Couldn't load transaction {self.txid}")
+            return False
 
     def input_sum(self):
         return sum([input.output.value for input in self.inputs])

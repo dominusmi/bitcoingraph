@@ -112,3 +112,12 @@ def process_create_pk_to_generated(batch_size: int, start_height: int, max_heigh
 
     with driver.session() as session:
         save_generated_addresses(session, pk_to_addresses)
+
+
+def generate_addresses(session: neo4j.Session, start_height: int, max_height: int):
+    pk_to_addresses = {}
+    addresses = fetch_addresses_by_block(session, start_height, max_height)
+
+    if len(pk_to_addresses) == 0:
+        generate_from_address_list(addresses, pk_to_addresses)
+        save_generated_addresses(session, pk_to_addresses)

@@ -8,6 +8,7 @@ from pathlib import Path
 from time import sleep
 from typing import Dict, List, Set, Optional, Iterable
 
+import neo4j
 import tqdm
 
 
@@ -161,7 +162,7 @@ def calculate_input_addresses(input_path):
 def fetch_transactions_from_blocks(session: 'neo4j.Session', start_height: int, max_height: int):
     query = """
         MATCH (b:Block)
-        WHERE b.height >= $lower AND b.height < $higher
+        WHERE b.height >= $lower AND b.height <= $higher
         WITH b
         MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
         WITH t, collect(distinct a.address) as addresses
@@ -329,8 +330,6 @@ class EntityGrouping:
             }
             """, addresses=list(addresses))
 
-            result = result.consume()
-
 
 def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
     session = driver.session()
@@ -409,3 +408,12 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
     with driver.session() as session:
         sleep(1)
         entity_grouping.save_entities(session, display_progress=True)
+
+
+def upsert_entities(session: neo4j.Session, start_height: int, max_height: int):
+    rows = fetch_transactions_from_blocks(session, start_height, max_height)
+    entity_grouping = EntityGrouping()
+    for row in rows:
+        addresses = row["addresses"]
+        entity_grouping.update_from_address_group(addresses)
+    entity_grouping.save_entities(session)

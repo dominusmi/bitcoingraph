@@ -1,4 +1,8 @@
+import bitcoingraph.bitcoind
+from bitcoingraph.address import fetch_addresses_by_block, generate_addresses
+from bitcoingraph.blockchain import BlockchainException
 from bitcoingraph.common import is_pypy
+from bitcoingraph.entities import upsert_entities
 
 if not is_pypy():
     import neo4j
@@ -93,15 +97,27 @@ class GraphController:
     def add_block(self, block):
         with self.graph_db.transaction() as db_transaction:
             block_node_id = db_transaction.add_block(block)
-            for index, tx in enumerate(block.transactions):
-                tx_node_id = db_transaction.add_transaction(block_node_id, tx)
-                if not tx.is_coinbase():
-                    for input in tx.inputs:
-                        db_transaction.add_input(tx_node_id, input.output_reference)
-                for output in tx.outputs:
-                    output_node_id = db_transaction.add_output(tx_node_id, output)
-                    for address in output.addresses:
-                        db_transaction.add_address(output_node_id, address)
+            try:
+
+                for index, tx in enumerate(block.transactions):
+                    tx_node_id = db_transaction.add_transaction(block_node_id, tx)
+                    if not tx.is_coinbase():
+                        for input in tx.inputs:
+                            db_transaction.add_input(tx_node_id, input.output_reference)
+
+                    for output in tx.outputs:
+                        output_node_id = db_transaction.add_output(tx_node_id, output)
+                        for address in output.addresses:
+                            db_transaction.add_address(output_node_id, address)
+
+                generate_addresses(db_transaction.tx, block.height, block.height)
+                upsert_entities(db_transaction.tx, block.height, block.height)
+
+            except BlockchainException as e:
+                if e.inner_exc and e.inner_exc.args and 'genesis' in e.inner_exc.args[0]:
+                    print("Skipping inputs for genesis block")
+                else:
+                    raise e
 
 
 class Address:
