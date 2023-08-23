@@ -159,14 +159,21 @@ def calculate_input_addresses(input_path):
                 input_address_writer.writerow([txid, match_address])
 
 
-def fetch_transactions_from_blocks(session: 'neo4j.Session', start_height: int, max_height: int):
+def get_addresses_grouped_by_transaction(session: 'neo4j.Session', start_height: int, max_height: int):
     query = """
         MATCH (b:Block)
         WHERE b.height >= $lower AND b.height <= $higher
         WITH b
         MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
         WITH t, collect(distinct a.address) as addresses
-        RETURN addresses
+        OPTIONAL MATCH (a)-[:GENERATES]->(b:Address)
+        WHERE a.address in addresses AND not b.address in addresses
+        WITH t, addresses, collect(distinct b.address) as generatedOut
+        OPTIONAL MATCH (a)<-[:GENERATES]-(b:Address)
+        WHERE a.address in addresses AND not b.address in addresses
+        WITH t, addresses, generatedOut, collect(distinct b.address) as generatedIn
+        WITH t, addresses, generatedOut + generatedIn as generated
+        RETURN t.txid, addresses, generated
     """
     result = session.run(query, stream=True, lower=start_height, higher=max_height)
     return result.data()
@@ -411,9 +418,9 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
 
 
 def upsert_entities(session: neo4j.Session, start_height: int, max_height: int):
-    rows = fetch_transactions_from_blocks(session, start_height, max_height)
+    rows = get_addresses_grouped_by_transaction(session, start_height, max_height)
     entity_grouping = EntityGrouping()
     for row in rows:
-        addresses = row["addresses"]
+        addresses = row["addresses"] + row["generated"]
         entity_grouping.update_from_address_group(addresses)
     entity_grouping.save_entities(session)
