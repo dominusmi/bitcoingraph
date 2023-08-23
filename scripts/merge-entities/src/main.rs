@@ -4,7 +4,6 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
-use std::path::PathBuf;
 use std::collections::HashSet;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -50,25 +49,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let input_path = Path::new(&args[1]);
     let output_path = Path::new(&args[2]);
-    let mut entity_path = PathBuf::from(output_path.clone());
 
     // Extract the parent directory of the original path
-    if let Some(parent) = output_path.parent() {
-        entity_path = parent.join("entity.csv");
-    } else {
-        eprintln!("Original path has no parent directory.");
-        return Err(Box::from("Original path has no parent directory.".to_string()));
-    }
+    let entity_path = match output_path.parent() {
+        None => {
+            eprintln!("Original path has no parent directory.");
+            return Err(Box::from("Original path has no parent directory.".to_string()));
+        }
+        Some(parent) => parent.join("entity.csv")
+    };
 
     let input_file = File::open(&input_path)?;
     let reader = BufReader::new(input_file);
 
     let mut idx_map: HashMap<String, usize> = HashMap::new();
     let mut uf = UnionFind::new();
-    let mut lines: Vec<(usize, String)> = Vec::new();
 
-    let mut tmp_lines_path = format!("/tmp/merge_entities_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis());
-    let mut tmp = BufWriter::new(&tmp_lines_path);
+    let tmp_lines_path = format!("/tmp/merge_entities_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis());
+    let tmp_lines_file = File::create(&tmp_lines_path)?;
+    let mut tmp = BufWriter::new(tmp_lines_file);
 
     let start_time = Instant::now();
     for (index, line) in reader.lines().enumerate() {
@@ -101,9 +100,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Done processing lines. Writing new file.");
     let mut start_write = Instant::now();
 
-    let tmp_lines_reader = BufReader::new(&tmp_lines_path);
+    let tmp_lines_file = File::open(&tmp_lines_path)?;
+    let tmp_lines_reader = BufReader::new(tmp_lines_file);
+
     for line in tmp_lines_reader.lines() {
-        let parts: Vec<&str> = line.unwrap().split(",").collect();
+        let line = line?;
+        let parts: Vec<&str> = line.split(",").collect();
         let idx = parts[0].parse()?;
         let str = parts[1];
         let new_idx = uf.find(idx);
