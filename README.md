@@ -44,6 +44,7 @@ The basic requirements for a database up to July 2023 are:
 - 48GB RAM
 - A good CPU is nice to have as part of the pipeline uses it intesively 
 - If you're going to run your own bitcoin node, a good internet connection
+
 A detailed explanation of the hardware requirements can be [found here](docs/documentation.md#hardware-requirements) 
 
 ### Software
@@ -140,7 +141,8 @@ The following CSV files are created (with separate header files):
 * **rel_output_address.csv**: relationship between outputs and addresses (output key, address)
 * **rel_tx_output.csv**: relationship between transactions and transaction outputs (tx_hash, output key)
 
-### Step 2: Compute entities over transaction dump
+### Step 2: Compute entities over transaction dump 
+#### _and add connection between public keys and generated keys_
 
 
 #### 2.1: Compute the entities
@@ -167,8 +169,19 @@ On our machine with 110G and AMD Ryzen 5 5600G, we used the following parameters
 ```
 and reached max usage of 65G of RAM, and took ~15 hours to complete.
 
+#### 2.2: Compute generated public keys
+This step is optional, but allows to generate all the keys from the public keys.
+The raw data doesn't include the connection between addresses in the format public key, and the 
+P2PKH and P2WPKH addresses that are "generated" by the latter. This script computes all the generated 
+addresses, and creates a file `rel_address_address.csv` and `rel_address_address_header.csv`.
+It's essential to run this script at this step (and not earlier / later) since it also modifies `rel_entity_address.csv`,
+allowing these generated keys to be connected through entity where needed.
 
-#### 2.2: Merge the entities together
+```
+bcgraph-pk-to-addresses -i blocks_0_1000
+```
+
+#### 2.3: Merge the entities together
 
 Once the entities are computed, we also need to run the following
 ```bash
@@ -191,14 +204,6 @@ Two additional files are created:
 #### Note: what is this about?
 Check the [extended documentation](docs/documentations#entities-process)
 
-### Step 3: Compute P2PKH and P2WPKH addresses
-The raw data doesn't include the connection between addresses in the format public key, and the 
-P2PKH and P2WPKH addresses that are "generated" by the latter. This script computes all the generated 
-addresses, and creates a file `rel_address_address.csv` and `rel_address_address_header.csv`.
-
-```
-bcgraph-pk-to-addresses -i blocks_0_1000
-```
 
 ### Step 4: Ingest pre-computed dump into Neo4J
 
@@ -283,7 +288,7 @@ Finally, start Neo4J
 
     systemctl start neo4j
 
-### Step 4: Enable synchronization with Bitcoin block chain
+### Step 4: Enable synchronization with Bitcoin blockchain
 
 Bitcoingraph provides a synchronisation script, which reads blocks from bitcoind and writes them into Neo4j. It is
 intended to be called by a cron job which runs daily or more frequent. For performance reasons it is no substitution for
@@ -295,6 +300,7 @@ steps 1-3.
 
 * [Bernhard Haslhofer](mailto:bernhard.haslhofer@ait.ac.at)
 * [Roman Karl](mailto:roman.karl@ait.ac.at)
+* [Edoardo Barp](mailto:edoardo.barp@toptal.com)
 
 
 ## License
