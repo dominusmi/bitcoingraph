@@ -1,6 +1,37 @@
 # Table of contents
 - [Neo4j pointers and examples](#neo4j-pointers)
 - [Using your own bitcoin node](#own-bitcoin-node)
+- [Compute entities extended explanation](#entities-process)
+
+<a name="hardware-requirements"></a>
+## Hardware requirements
+
+**Network**: Before anything else, you will have to download the entire blockchain up to the last block that interests
+you. In July 2023 the full blockchain is a download of about 525 GiB. You will need this on the same machine (or at
+least on the same LAN) as bitcoingraph and your neo4j database.
+
+**Storage**: Exporting the blockchain and importing it into neo4j does some very intensive I/O. You are advised to use
+the fastest possible NVMe for writing and, whenever possible, separate reading from writing onto different storage
+devices. In a first step you will run bitcoind and dump the entire blockchain into various CSV files. You can easily put
+bitcoind and its BTC blocks on a traditional metal HDD (the full blockchain with indices and other auxiliary files is
+about 575 GiB in July 2023), but you should be writing the CSV files on a different device, preferably an NVMe. A neo4j
+database of the full blockchain (again, July 2023) will need more than 2 TB and less than 4 TB of storage space. Big Fat
+Warning: do NOT use any copy-on-write or snapshotting filesystem. If you do, you will completely ruin performance. Even
+journaling should probably be turned off until the neo4j database is ready and running.
+
+**CPU**: Some (but not all) bitcoingraph processes, most notably the import into neo4j, can use multiple CPUs in
+parallel. Then again, the more CPUs that you use, the more likely it is that you will run into your storage's read/write
+limits. If you use metal HDDs, one or two CPU cores should be enough. If you use fast NVMes you can experiment with four
+to eight cores, also depending on the speed of your CPU.
+
+**RAM**: This is the most expensive part of this operation. For a full blockchain import (July 2023) into neo4j you will
+need at least 48 GB of RAM, most likely even more. The original bcgraph-compute-entities
+from [source](https://github.com/behas/bitcoingraph/tree/master/scripts) consumed more than 230 GB of RAM for an entities
+computation of blocks 0-675000. The current version can do the same job with about 60 GB of RAM. You can
+try to tweak this back and for some marginal gains, but you will never achieve any acceptable speed on a low-memory
+system. Or any results at all, other than a crash, without altering the code. A wet-finger-in-the-air recommendation is
+64 GB of RAM at the very least, preferably more.
+
 
 <a name="neo4j-pointers"></a>
 ## Neo4j pointers
@@ -134,3 +165,18 @@ Test the REST interface using some sample block hash
 
 When you have reached this point, your Bitcoin Core setup is working. You can let it run on, 
 or relaunch it as a background daemon with `bitcoind -daemon`.
+
+
+<a name="entities-process"></a>
+## Compute entities extended documentation
+Higher up in the README, we explained what an entity is. Computing entities is a simple
+process fundamentally, made very hard due to the size of the files. 
+We use two files: rel_input.csv and rel_output_address.csv. The first is in
+chronological order, and the second is sorted by Output id.
+
+The objective is two-fold: 1. for each output, find the address, and 2. if two addresses
+are inputs to the same transaction, create an entity (or merge if one of the two is already
+part of an entity).
+
+The `bcgraph-compute-entities` is basically a database specialized for this very specific
+file format and objective.
