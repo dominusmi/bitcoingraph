@@ -31,10 +31,12 @@ def to_json(raw_data):
 
 
 def sort(path, filename, args=''):
+    tmp = path + '/tmp'
+    if not os.path.exists(tmp):
+        os.mkdir(tmp)
+    cpus = os.cpu_count()
     if sys.platform == 'darwin':
-        s = 'LC_ALL=C gsort -S 50% --parallel=4 {0} {1} -o {1}'
+        s = 'LC_ALL=C gsort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
     else:
-        s = 'LC_ALL=C sort -S 50% --parallel=4 {0} {1} -o {1}'
+        s = 'LC_ALL=C sort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
     status = subprocess.call(s.format(args, os.path.join(path, filename)), shell=True)
-    if status != 0:
-        raise Exception('unable to sort file: {}'.format(filename))
