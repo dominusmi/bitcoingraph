@@ -116,7 +116,7 @@ def process_create_pk_to_generated(batch_size: int, start_height: int, max_heigh
         save_generated_addresses(session, pk_to_addresses)
 
 
-def generate_addresses(session: neo4j.Session, pk_addresses: Set[str]):
+def upsert_generated_addresses(session: neo4j.Session, pk_addresses: Set[str]):
     pk_to_addresses = {}
     generate_from_address_list(pk_addresses, pk_to_addresses)
     save_generated_addresses(session, pk_to_addresses)
