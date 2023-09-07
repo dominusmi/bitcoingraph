@@ -42,13 +42,6 @@ jobs:
         pip install .
         pip install pytest
 
-    - name: Wait for Neo4j to be ready
-      run: |
-        until curl --fail http://localhost:7474/db/data/; do
-          echo 'Waiting for Neo4j to be ready...'
-          sleep 5
-        done
-
     - name: Test
       working-directory: tests
       run: python -m pytest
