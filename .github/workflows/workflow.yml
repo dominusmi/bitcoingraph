@@ -14,23 +14,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    services:
-      neo4j:
-        image: neo4j:5.9.0
-        env:
-          NEO4J_apoc_export_file_enabled: "true"
-          NEO4J_apoc_import_file_enabled: "true"
-          NEO4J_apoc_import_file_use__neo4j__config: "true"
-          NEO4J_dbms_security_auth__enabled: "false"
-          NEO4J_dbms_allow__upgrade: "true"
-          NEO4JLABS_PLUGINS: "[\"apoc\"]"
-          NEO4J_AUTH: neo4j/neo4j
-        ports:
-          - 7687:7687
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+
+    - name: Start neo4j
+      run: docker compose up -d
 
     - name: Set up Python
       uses: actions/setup-python@v2
@@ -45,5 +34,5 @@ jobs:
     - name: Test
       working-directory: tests
       env:
-        NEO4J_HOST: neo4j
+        NEO4J_HOST: 0.0.0.0
       run: python -m pytest
