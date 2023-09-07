@@ -6,8 +6,10 @@ An API for traversing the Bitcoin blockchain
 """
 import json
 import os
+import time
 from typing import Iterator
 
+from bitcoingraph.logger import get_logger
 from bitcoingraph.model import Block, Transaction
 from bitcoingraph.bitcoind import BitcoindException
 
@@ -15,7 +17,7 @@ __author__ = 'Bernhard Haslhofer (bernhard.haslhofer@ait.ac.at)'
 __copyright__ = 'Copyright 2015, Bernhard Haslhofer'
 __license__ = "MIT"
 
-
+logger = get_logger("blockchain")
 class BlockchainException(Exception):
     """
     Exception raised when accessing or navigating the block chain.
@@ -56,13 +58,20 @@ class Blockchain:
         """
         # Returns block by hash
         try:
+            logger.info(f"Getting block: {block_hash}")
+            start = time.time()
             raw_block_data = self._bitcoin_proxy.getblock(block_hash)
+            interval = time.time()-start
+            logger.info(f"Took {interval} seconds to get block")
 
             if os.environ.get("BC_CACHE") == "1":
+                logger.info("Saving block in local cache")
                 with open(f"block-{block_hash}.json", "w+") as f:
                     f.write(json.dumps(raw_block_data))
 
-            return Block.model_validate(raw_block_data)
+            logger.info("Parsing block")
+            block = Block.model_validate(raw_block_data)
+            return block
         except BitcoindException as exc:
             raise BlockchainException('Cannot retrieve block {}'.format(block_hash), exc)
 

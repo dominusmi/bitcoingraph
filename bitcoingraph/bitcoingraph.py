@@ -170,7 +170,10 @@ class BitcoinGraph:
                 end = min(max_height, blockchain_end)
             if start >= end:
                 return
-            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
+
+            logger.info(f"Getting blocks in range {start}-{end}")
+            for block in self.blockchain.get_blocks_in_range(start, end):
+                logger.info("Adding block")
                 self.graph_db.add_block(block)
                 yield block.height
 

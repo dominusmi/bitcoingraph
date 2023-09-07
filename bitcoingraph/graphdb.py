@@ -1,17 +1,16 @@
-import tqdm
-
-import bitcoingraph.bitcoind
-from bitcoingraph.address import fetch_addresses_by_block, generate_addresses
+from bitcoingraph.address import upsert_generated_addresses
 from bitcoingraph.blockchain import BlockchainException
 from bitcoingraph.common import is_pypy
 from bitcoingraph.entities import upsert_entities
+from bitcoingraph.logger import get_logger
 
 if not is_pypy():
     import neo4j
 
 from bitcoingraph.neo4j import Neo4jController
-from bitcoingraph.helper import to_time, to_json
+from bitcoingraph.helper import to_time
 
+logger = get_logger("graphdb")
 
 def round_value(bitcoin_value):
     return round(bitcoin_value, 8)
@@ -148,7 +147,7 @@ class GraphController:
                 grouped_addresses_per_tx = []
 
 
-
+                logger.info("Preparing queries")
                 for index, tx in enumerate(block.transactions):
                     # tx_node_id = db_transaction.add_transaction(block_node_id, tx)
                     transactions.append({'txid': tx.txid, 'coinbase': tx.is_coinbase()})
@@ -178,20 +177,28 @@ class GraphController:
                             if address.startswith("pk_"):
                                 pk_addresses.add(address)
 
+                logger.info("Executing queries")
+                logger.debug("Loading block")
                 db_transaction.tx.run(
                     block_query, {'hash': block.hash, 'height': block.height, 'timestamp': block.timestamp}
                 )
+                logger.debug("Loading transactions")
                 db_transaction.tx.run(transaction_query, transactions=transactions, height=block.height)
+                logger.debug("Loading outputs")
                 db_transaction.tx.run(output_query, outputs=outputs)
+                logger.debug("Loading inputs")
                 db_transaction.tx.run(input_query, inputs=inputs)
+                logger.debug("Loading addresses")
                 db_transaction.tx.run(address_query, addresses=addresses)
 
-                pk_to_addresses = generate_addresses(db_transaction.tx, pk_addresses)
+                logger.info("Adding generated addresses")
+                pk_to_addresses = upsert_generated_addresses(db_transaction.tx, pk_addresses)
+                logger.info("Adding entities")
                 upsert_entities(db_transaction.tx, grouped_addresses_per_tx, pk_to_addresses)
 
             except BlockchainException as e:
                 if e.inner_exc and e.inner_exc.args and 'genesis' in e.inner_exc.args[0]:
-                    print("Skipping inputs for genesis block")
+                    logger.warn("Skipping inputs for genesis block")
                 else:
                     raise e
 

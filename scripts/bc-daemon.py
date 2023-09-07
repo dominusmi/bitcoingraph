@@ -6,6 +6,8 @@ from time import sleep
 
 from bitcoingraph.bitcoingraph import BitcoinGraph
 from bitcoingraph.blockchain import BlockchainException
+from bitcoingraph.logger import get_logger
+logger = get_logger("bc-daemon")
 
 parser = argparse.ArgumentParser(
     description='Synchronise database with blockchain')
@@ -72,7 +74,6 @@ def thread_wrapper(f, data_queue: queue.Queue, stop_queue: queue.Queue):
 
 seen_addresses = set([])
 
-
 def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, neo4j_user, neo4j_password,
          neo4j_protocol, max_height):
     blockchain = {'host': bc_host, 'port': bc_port,
@@ -84,13 +85,14 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
 
     finished_sync = False
     bcgraph = BitcoinGraph(blockchain=blockchain, neo4j=neo4j_cfg)
+    logger.info(f"Starting daemon. Running with max height {max_height}")
     while True:
         for _ in bcgraph.synchronize(max_height):
             finished_sync = False
 
         if not finished_sync:
             finished_sync = True
-            print("Finished syncing, sleeping")
+            logger.info("Finished syncing, sleeping")
 
         sleep(5)
 
