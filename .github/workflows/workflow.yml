@@ -1,0 +1,54 @@
+name: Run tests
+
+on:
+  push:
+    branches:
+      - master
+      - 'r&d'
+  pull_request:
+    branches:
+      - 'master'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      neo4j:
+        image: neo4j:5.9.0
+        env:
+          NEO4J_apoc_export_file_enabled: "true"
+          NEO4J_apoc_import_file_enabled: "true"
+          NEO4J_apoc_import_file_use__neo4j__config: "true"
+          NEO4J_dbms_security_auth__enabled: "false"
+          NEO4J_dbms_allow__upgrade: "true"
+          NEO4JLABS_PLUGINS: "[\"apoc\"]"
+          NEO4J_AUTH: neo4j/neo4j
+        ports:
+          - 7687:7687
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        pip install .
+        pip install pytest
+
+    - name: Wait for Neo4j to be ready
+      run: |
+        until curl --fail http://localhost:7474/db/data/; do
+          echo 'Waiting for Neo4j to be ready...'
+          sleep 5
+        done
+
+    - name: Test
+      working-directory: tests
+      run: python -m pytest
