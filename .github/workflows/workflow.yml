@@ -44,4 +44,6 @@ jobs:
 
     - name: Test
       working-directory: tests
+      env:
+        NEO4J_HOST: 0.0.0.0
       run: python -m pytest
