@@ -1,7 +1,7 @@
 import queue
 import threading
 from time import sleep
-from typing import List, Dict
+from typing import List, Dict, Set, Iterable
 
 import neo4j
 import tqdm
@@ -48,7 +48,7 @@ def get_p2wpkh(k: Key):
     return k.address(compressed=True, encoding="bech32")
 
 
-def generate_from_address_list(addresses: List[str], pk_to_addresses: Dict[str, List[str]]):
+def generate_from_address_list(addresses: Iterable[str], pk_to_addresses: Dict[str, List[str]]):
     for addr in addresses:
         if addr.endswith("CHECKSIG"):
             pk = addr[3:-12]
@@ -70,7 +70,9 @@ def save_generated_addresses(session: neo4j.Session, pk_to_addresses: Dict[str, 
     MATCH (a:Address {address: pk})
     WITH a, list_generated
     UNWIND list_generated as generated
-        MERGE (a)-[:GENERATES]->(b:Address {address: generated})
+        MERGE (b:Address {address: generated})
+        WITH a,b
+        MERGE (a)-[:GENERATES]->(b)
     """
     data = [[pk, addrs[0], addrs[1]] for pk, addrs in pk_to_addresses.items()]
     for i in range(0, len(data), batch_size):
@@ -114,10 +116,8 @@ def process_create_pk_to_generated(batch_size: int, start_height: int, max_heigh
         save_generated_addresses(session, pk_to_addresses)
 
 
-def generate_addresses(session: neo4j.Session, start_height: int, max_height: int):
+def generate_addresses(session: neo4j.Session, pk_addresses: Set[str]):
     pk_to_addresses = {}
-    addresses = fetch_addresses_by_block(session, start_height, max_height)
-
-    if len(pk_to_addresses) == 0:
-        generate_from_address_list(addresses, pk_to_addresses)
-        save_generated_addresses(session, pk_to_addresses)
+    generate_from_address_list(pk_addresses, pk_to_addresses)
+    save_generated_addresses(session, pk_to_addresses)
+    return pk_to_addresses

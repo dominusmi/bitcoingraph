@@ -1,4 +1,5 @@
 import bisect
+import copy
 import csv
 import os
 import pickle
@@ -6,7 +7,7 @@ import queue
 import uuid
 from pathlib import Path
 from time import sleep
-from typing import Dict, List, Set, Optional, Iterable
+from typing import Dict, List, Set, Optional, Iterable, Sized
 
 import neo4j
 import tqdm
@@ -303,23 +304,26 @@ class EntityGrouping:
             MATCH (a:Address) 
             WHERE a.address IN $addresses
             WITH collect(a) as addrs, min(a.address) as minA
+            
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
             WHERE a in addrs
+            
             WITH addrs, minA, e ORDER BY e.entity_id ASC
             WITH addrs, minA, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
+            
+            // Keeping entity name or creating new one
             WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
             WITH *, CASE 
                 WHEN entityName STARTS WITH "+" THEN substring(entityName, 1) 
                 ELSE entityName 
             END AS entityName
 
-            // RETURN minEntity, addrs, minA, entities
             CALL {
                 WITH minEntity, addrs, minA
                 WITH minEntity, addrs, minA WHERE minEntity IS NULL
                 CREATE (e:Entity {entity_id: minA})
                 WITH *
-                MATCH (a:Address) WHERE a in addrs
+                UNWIND addrs as a
                 MERGE (e)-[:OWNER_OF]->(a)
             
                 UNION 
@@ -332,7 +336,8 @@ class EntityGrouping:
                 MATCH (a:Address) WHERE a in addrs
                 MERGE (minEntity)-[:OWNER_OF]->(a)
                 WITH entities
-                MATCH (e:Entity) WHERE e in entities
+                UNWIND entities as e
+                MATCH (e)
                 DETACH DELETE (e)
             }
             """, addresses=list(addresses))
@@ -417,10 +422,14 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
         entity_grouping.save_entities(session, display_progress=True)
 
 
-def upsert_entities(session: neo4j.Session, start_height: int, max_height: int):
-    rows = get_addresses_grouped_by_transaction(session, start_height, max_height)
+def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[str]], pk_to_addresses: Dict[str, List[str]]):
     entity_grouping = EntityGrouping()
-    for row in rows:
-        addresses = row["addresses"] + row["generated"]
-        entity_grouping.update_from_address_group(addresses)
+
+    for k, v in pk_to_addresses.items():
+        addresses = set(v)
+        addresses.add(k)
+        entity_grouping.update_from_address_group(list(addresses))
+
+    for addresses in addresses_per_transaction:
+        entity_grouping.update_from_address_group(list(addresses))
     entity_grouping.save_entities(session)

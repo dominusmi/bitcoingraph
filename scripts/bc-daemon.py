@@ -2,15 +2,10 @@
 
 import argparse
 import queue
-import threading
 from time import sleep
 
-import neo4j
-
 from bitcoingraph.bitcoingraph import BitcoinGraph
-from bitcoingraph.address import generate_addresses
 from bitcoingraph.blockchain import BlockchainException
-from bitcoingraph.entities import upsert_entities
 
 parser = argparse.ArgumentParser(
     description='Synchronise database with blockchain')

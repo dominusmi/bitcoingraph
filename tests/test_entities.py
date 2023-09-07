@@ -34,12 +34,21 @@ def test_get_addresses_grouped_by_transaction(session):
     """)
 
     rows = get_addresses_grouped_by_transaction(session, 1, 1)
-    assert len(rows) == 2
-    assert set(rows[0]["addresses"]) == {'11', '12'}
-    assert set(rows[0]["generated"]) == {'11_1g', '11_2g', '12father'}
 
-    assert set(rows[1]["addresses"]) == {'21', '22'}
-    assert set(rows[1]["generated"]) == set([])
+    assert len(rows) == 2
+    assertions = 0
+
+    for row in rows:
+        if len(row["generated"]):
+            assertions |= 1
+            assert set(row["addresses"]) == {'11', '12'}
+            assert set(row["generated"]) == {'11_1g', '11_2g', '12father'}
+        else:
+            assertions |= 2
+            assert set(row["addresses"]) == {'21', '22'}
+            assert set(row["generated"]) == set([])
+
+    assert assertions == 3
 
 
 class TestSaveEntities():

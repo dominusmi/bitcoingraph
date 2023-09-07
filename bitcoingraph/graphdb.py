@@ -1,3 +1,5 @@
+import tqdm
+
 import bitcoingraph.bitcoind
 from bitcoingraph.address import fetch_addresses_by_block, generate_addresses
 from bitcoingraph.blockchain import BlockchainException
@@ -95,23 +97,97 @@ class GraphController:
         return self.graph_db.get_max_block_height()
 
     def add_block(self, block):
+        block_query = """
+        CREATE (b:Block {hash: $hash, height: $height, timestamp: $timestamp})
+        WITH b
+        OPTIONAL MATCH (bprev:Block {height: $height-1})
+        CALL { 
+            WITH b,bprev
+            WITH b, bprev WHERE bprev is not null
+            CREATE (b)-[:APPENDS]->(bprev)
+        }
+        """
+
+        transaction_query = """
+        UNWIND $transactions as tx
+        MATCH (b:Block {height: $height})
+        CREATE (b)-[:CONTAINS]->(t:Transaction {txid: tx.txid, coinbase: tx.coinbase})
+        """
+
+        input_query = """
+        UNWIND $inputs as input
+        MATCH (o:Output {txid_n: input.txid_n})
+        MATCH (t:Transaction {txid: input.txid})
+        CREATE (o)-[:INPUT]->(t)
+        """
+
+        output_query = """
+        UNWIND $outputs as output
+        CREATE (o:Output {n: output.n, txid_n: output.txid_n, type: output.type, value: output.value})
+        WITH o, output
+        MATCH (t:Transaction {txid: output.txid})
+        CREATE (t)-[:OUTPUT]->(o)
+        """
+
+        address_query = """
+        UNWIND $addresses as address
+        MERGE (a:Address {address: address.address})
+        WITH a, address
+        MATCH (o:Output {txid_n: address.txid_n})
+        CREATE (o)-[:USES]->(a)
+        """
+
         with self.graph_db.transaction() as db_transaction:
-            block_node_id = db_transaction.add_block(block)
+            # block_node_id = db_transaction.add_block(block)
+            transactions = []
+            inputs = []
+            outputs = []
+            addresses = []
             try:
+                pk_addresses = set([])
+                grouped_addresses_per_tx = []
+
+
 
                 for index, tx in enumerate(block.transactions):
-                    tx_node_id = db_transaction.add_transaction(block_node_id, tx)
+                    # tx_node_id = db_transaction.add_transaction(block_node_id, tx)
+                    transactions.append({'txid': tx.txid, 'coinbase': tx.is_coinbase()})
+                    grouped_addresses_per_tx.append(set())
                     if not tx.is_coinbase():
-                        for input in tx.inputs:
-                            db_transaction.add_input(tx_node_id, input.output_reference)
+                        for input_ in tx.inputs:
+                            inputs.append({
+                                'txid_n': '{}_{}'.format(input_.output_reference.txid, input_.output_reference.index),
+                                'txid': tx.txid
+                            })
+
+                            # db_transaction.add_input(tx_node_id, input.output_reference)
+                            grouped_addresses_per_tx[index].update(input_.output_reference.addresses)
 
                     for output in tx.outputs:
-                        output_node_id = db_transaction.add_output(tx_node_id, output)
+                        output_txid_n = '{}_{}'.format(output.txid, output.index)
+                        outputs.append({
+                            'txid_n': output_txid_n, 'n': output.index, 'value': output.value, 'type': output.type,
+                            'txid': output.txid
+                        })
+                        # output_node_id = db_transaction.add_output(tx_node_id, output)
                         for address in output.addresses:
-                            db_transaction.add_address(output_node_id, address)
+                            addresses.append({
+                                "address": address, "txid_n": output_txid_n
+                            })
+                            # db_transaction.add_address(output_node_id, address)
+                            if address.startswith("pk_"):
+                                pk_addresses.add(address)
 
-                generate_addresses(db_transaction.tx, block.height, block.height)
-                upsert_entities(db_transaction.tx, block.height, block.height)
+                db_transaction.tx.run(
+                    block_query, {'hash': block.hash, 'height': block.height, 'timestamp': block.timestamp}
+                )
+                db_transaction.tx.run(transaction_query, transactions=transactions, height=block.height)
+                db_transaction.tx.run(output_query, outputs=outputs)
+                db_transaction.tx.run(input_query, inputs=inputs)
+                db_transaction.tx.run(address_query, addresses=addresses)
+
+                pk_to_addresses = generate_addresses(db_transaction.tx, pk_addresses)
+                upsert_entities(db_transaction.tx, grouped_addresses_per_tx, pk_to_addresses)
 
             except BlockchainException as e:
                 if e.inner_exc and e.inner_exc.args and 'genesis' in e.inner_exc.args[0]:

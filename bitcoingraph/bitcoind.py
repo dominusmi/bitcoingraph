@@ -212,7 +212,7 @@ class BitcoinProxy:
                 r = self._rest_proxy.get_block(block_hash)
 
         else:
-            r = self._jsonrpc_proxy.call('getblock', block_hash)
+            r = self._jsonrpc_proxy.call('getblock', block_hash, 3)
         return r
 
     def getblockcount(self):
