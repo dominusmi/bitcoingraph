@@ -26,6 +26,8 @@ class TestBlockchainObject(unittest.TestCase):
         self.assertIsNotNone(self.blockchain)
         self.assertIsNotNone(self.bitcoin_proxy)
         with self.graph_db.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (a:Address) REQUIRE a.address IS UNIQUE;")
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (b:Block) REQUIRE b.height IS UNIQUE;")
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (o:Output) REQUIRE o.txid_n IS UNIQUE;")
@@ -33,7 +35,6 @@ class TestBlockchainObject(unittest.TestCase):
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE;")
 
             session.run("CALL db.awaitIndexes(120)")
-            session.run("MATCH (n) DETACH DELETE n")
 
             for i in range(99999, 100002):
                 block = self.blockchain.get_block_by_height(i)
