@@ -1,3 +1,5 @@
+import os
+
 import neo4j
 import pytest
 
@@ -6,9 +8,15 @@ from bitcoingraph.entities import EntityGrouping, get_addresses_grouped_by_trans
 
 @pytest.fixture
 def session():
-    driver = neo4j.GraphDatabase.driver(f"bolt://127.0.0.1:7687",
-                                        auth=("neo4j", "neo4j"),
-                                        connection_timeout=3600)
+    host = os.environ.get("NEO4J_HOST", "127.0.0.1")
+    port = os.environ.get("NEO4J_PORT", "7687")
+    user = os.environ.get("NEO4J_USER", "neo4j")
+    psw = os.environ.get("NEO4J_PASSWORD", "neo4j")
+
+    driver = neo4j.GraphDatabase.driver(
+        f"bolt://{host}:{port}",
+        auth=(user, psw),
+        connection_timeout=3600)
 
     with driver.session() as session:
         session.run("MATCH (n) DETACH DELETE n")
