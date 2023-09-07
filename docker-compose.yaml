@@ -1,0 +1,20 @@
+version: '2.4'
+services:
+
+  neo4j:
+    image: neo4j:5.8
+    container_name: neo4j_db
+    ports:
+      - 7474:7474
+      - 7687:7687
+    environment:
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_apoc_import_file_use__neo4j__config: "true"
+      NEO4J_dbms_security_auth__enabled: "false"
+      NEO4J_dbms_allow__upgrade: "true"
+      NEO4JLABS_PLUGINS: "[\"apoc\"]"
+      NEO4J_AUTH: neo4j/neo4j
+    volumes:
+#      - ./scripts/blocks-full/:/opt/local/data
+      - ./scripts/blocks/:/opt/local/data
