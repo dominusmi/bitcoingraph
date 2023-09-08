@@ -12,6 +12,9 @@ from typing import Dict, List, Set, Optional, Iterable, Sized
 import neo4j
 import tqdm
 
+from bitcoingraph.logger import get_logger
+
+logger = get_logger("entities")
 
 class Address:
     counter = 0
@@ -293,11 +296,12 @@ class EntityGrouping:
 
     def save_entities(self, session: 'neo4j.Session', display_progress=False):
         if display_progress:
+            raise DeprecationWarning("Not maintained")
             iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses),
                                  desc="Saving entities")
         else:
             iterator = self.entity_idx_to_addresses.items()
-        for entity_idx, addresses in iterator:
+        for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
             result = session.run("""
@@ -425,6 +429,7 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
 def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[str]], pk_to_addresses: Dict[str, List[str]]):
     entity_grouping = EntityGrouping()
 
+    logger.info("Computing entities")
     for k, v in pk_to_addresses.items():
         addresses = set(v)
         addresses.add(k)
@@ -432,4 +437,6 @@ def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[
 
     for addresses in addresses_per_transaction:
         entity_grouping.update_from_address_group(list(addresses))
+
+    logger.info("Saving entities")
     entity_grouping.save_entities(session)
