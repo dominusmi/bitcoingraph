@@ -4,6 +4,7 @@ import csv
 import os
 import pickle
 import queue
+import random
 import uuid
 from pathlib import Path
 from time import sleep
@@ -301,19 +302,25 @@ class EntityGrouping:
                                  desc="Saving entities")
         else:
             iterator = self.entity_idx_to_addresses.items()
+
+        max_entity_id = session.run("""MATCH (e:Entity) RETURN e.entity_id as eid ORDER BY e.entity_id DESC LIMIT 1""").single()['eid']
+        # just to avoid a potential conflict, add some random amount to the max_entity_id
+        max_entity_id += random.randint(100,1000)
         for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
+
+
             result = session.run("""
-            MATCH (a:Address) 
-            WHERE a.address IN $addresses
-            WITH collect(a) as addrs, min(a.address) as minA
+            UNWIND $addresses as address
+            MATCH (a:Address {address: address}) 
+            WITH collect(a) as addrs
             
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
             WHERE a in addrs
             
-            WITH addrs, minA, e ORDER BY e.entity_id ASC
-            WITH addrs, minA, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
+            WITH addrs, e ORDER BY e.entity_id ASC
+            WITH addrs, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
             
             // Keeping entity name or creating new one
             WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
@@ -323,17 +330,17 @@ class EntityGrouping:
             END AS entityName
 
             CALL {
-                WITH minEntity, addrs, minA
-                WITH minEntity, addrs, minA WHERE minEntity IS NULL
-                CREATE (e:Entity {entity_id: minA})
+                WITH minEntity, addrs 
+                WITH minEntity, addrs WHERE minEntity IS NULL
+                CREATE (e:Entity {entity_id: $max_entity_id})
                 WITH *
                 UNWIND addrs as a
                 MERGE (e)-[:OWNER_OF]->(a)
             
                 UNION 
                 
-                WITH minEntity, addrs, minA, entities, entityName
-                WITH minEntity, addrs, minA, entities, entityName 
+                WITH minEntity, addrs, entities, entityName
+                WITH minEntity, addrs, entities, entityName 
                     WHERE minEntity IS NOT NULL
                 SET minEntity.name = entityName
                 WITH *
@@ -344,7 +351,8 @@ class EntityGrouping:
                 MATCH (e)
                 DETACH DELETE (e)
             }
-            """, addresses=list(addresses))
+            """, addresses=list(addresses), max_entity_id=max_entity_id)
+            max_entity_id += 1
 
 
 def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
