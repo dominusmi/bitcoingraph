@@ -195,6 +195,7 @@ class GraphController:
                 pk_to_addresses = upsert_generated_addresses(db_transaction.tx, pk_addresses)
                 logger.info("Adding entities")
                 upsert_entities(db_transaction.tx, grouped_addresses_per_tx, pk_to_addresses)
+                logger.info("Block completed. Committing transaction")
 
             except BlockchainException as e:
                 if e.inner_exc and e.inner_exc.args and 'genesis' in e.inner_exc.args[0]:
