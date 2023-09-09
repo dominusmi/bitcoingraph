@@ -1,6 +1,8 @@
 import csv
 import os
 
+from bitcoingraph.model import Block
+
 
 class CSVDumpWriter:
 
@@ -70,13 +72,13 @@ class CSVDumpWriter:
     def _get_path(self, filename):
         return os.path.join(self._output_path, filename + '.csv')
 
-    def write(self, block):
+    def write(self, block: Block):
         def a_b(a, b):
             return '{}_{}'.format(a, b)
 
         self._block_writer.writerow([block.hash, block.height, block.timestamp, block.difficulty])
         if block.has_previous_block():
-            self._rel_block_block_writer.writerow([block.hash, block.previous_block.hash])
+            self._rel_block_block_writer.writerow([block.hash, block.previous_block_hash])
 
         for tx in block.transactions:
             self._transaction_writer.writerow([tx.txid, tx.is_coinbase()])
@@ -85,7 +87,7 @@ class CSVDumpWriter:
                 for input in tx.inputs:
                     self._rel_input_writer.writerow(
                         [tx.txid,
-                         a_b(input.output_reference['txid'], input.output_reference['vout'])])
+                         a_b(input.output_reference.txid, input.output_reference.index)])
             for output in tx.outputs:
                 self._output_writer.writerow([a_b(tx.txid, output.index), output.index,
                                               output.value, output.type])
