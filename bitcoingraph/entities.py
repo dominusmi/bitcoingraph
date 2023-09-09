@@ -305,6 +305,7 @@ class EntityGrouping:
         for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
+            addresses = list(addresses)
 
             result = session.run("""
             UNWIND $addresses as address
