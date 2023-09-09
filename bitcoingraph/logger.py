@@ -16,7 +16,7 @@ def get_logger(name):
 
     logger = root_logger.getChild(name)
 
-    formatter = logging.Formatter('[%(levelname)s] - [%(name)s] - %(message)s')
+    formatter = logging.Formatter('[%(levelname)s]-[%(name)s]-[%(asctime)s]-%(message)s')
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
