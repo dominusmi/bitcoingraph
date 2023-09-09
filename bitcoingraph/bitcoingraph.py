@@ -135,7 +135,7 @@ class BitcoinGraph:
 
         number_of_blocks = end - start + 1
         with CSVDumpWriter(output_path, plain_header, separate_header) as writer:
-            for block in self.blockchain.get_blocks_in_range(start, end):
+            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
                 writer.write(block)
                 if progress:
                     processed_blocks = block.height - start + 1
