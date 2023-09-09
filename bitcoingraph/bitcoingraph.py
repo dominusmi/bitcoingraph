@@ -6,7 +6,7 @@ the Bitcoin block chain.
 
 """
 
-import logging
+from bitcoingraph.logger import get_logger
 
 import tqdm
 
@@ -17,7 +17,7 @@ from bitcoingraph.graphdb import GraphController
 from bitcoingraph.helper import sort
 from bitcoingraph.writer import CSVDumpWriter
 
-logger = logging.getLogger('bitcoingraph')
+logger = get_logger('bitcoingraph')
 
 
 class BitcoingraphException(Exception):
