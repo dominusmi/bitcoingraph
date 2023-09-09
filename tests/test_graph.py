@@ -1,6 +1,8 @@
 import os
 import unittest
 
+import neo4j.exceptions
+
 from bitcoingraph.blockchain import Blockchain
 from bitcoingraph.graphdb import GraphController
 from tests.rpc_mock import BitcoinProxyMock
@@ -28,11 +30,15 @@ class TestBlockchainObject(unittest.TestCase):
         with self.graph_db.driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n")
 
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (a:Address) REQUIRE a.address IS UNIQUE;")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (b:Block) REQUIRE b.height IS UNIQUE;")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (o:Output) REQUIRE o.txid_n IS UNIQUE;")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (t:Transaction) REQUIRE t.txid IS UNIQUE;")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE;")
+            try:
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (a:Address) REQUIRE a.address IS UNIQUE;")
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (b:Block) REQUIRE b.height IS UNIQUE;")
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (o:Output) REQUIRE o.txid_n IS UNIQUE;")
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (t:Transaction) REQUIRE t.txid IS UNIQUE;")
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE;")
+            except neo4j.exceptions.DatabaseError as e:
+                if not e.code == "Neo.DatabaseError.Schema.ConstraintCreationFailed":
+                    raise e
 
             session.run("CALL db.awaitIndexes(120)")
 

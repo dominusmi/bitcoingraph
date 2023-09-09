@@ -257,8 +257,8 @@ class TestSaveEntities():
 
     def test_merge_names_second_exists(self, session):
         session.run("""
-                MERGE (t1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: 123})
-                MERGE (t2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: 456, name: "foo"})
+                MERGE (t1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: "123"})
+                MERGE (t2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: "456", name: "foo"})
                 MERGE (t3:Address {address: "3"})
                 """)
 
@@ -275,7 +275,7 @@ class TestSaveEntities():
         data = response.data()
 
         assert len(data) == 1
-        assert data[0]["e"]["entity_id"] == 123
+        assert data[0]["e"]["entity_id"] == "123"
         assert data[0]["e"]["name"] == "foo"
         assert len(data[0]["addresses"])
         assert set((x["address"] for x in data[0]["addresses"])) == {"1", "2", "3"}
@@ -285,8 +285,8 @@ class TestMergeEntities:
     def test_simple_case(self, session):
         session.run("""
                 // Two entities
-                MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: 1})
-                MERGE (a2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: 2})
+                MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: "1"})
+                MERGE (a2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: "2"})
                 MERGE (a1)-[:GENERATES]->(a2)
                 """)
 
@@ -300,14 +300,14 @@ class TestMergeEntities:
 
     def test_generator_has_entity(self, session):
         session.run("""
-        MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: 1})
+        MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: "1"})
         MERGE (a1)-[:GENERATES]->(a2)
         """)
 
     def test_generated_has_entity(self, session):
         session.run("""
-        MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: 1})
-        MERGE (a2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: 2})
+        MERGE (a1:Address {address: "1"})<-[:OWNER_OF]-(e1:Entity {entity_id: "1"})
+        MERGE (a2:Address {address: "2"})<-[:OWNER_OF]-(e2:Entity {entity_id: "2"})
         MERGE (a1)-[:GENERATES]->(a2)
         """)
 
@@ -318,12 +318,12 @@ class TestMergeEntities:
 
         merge_query = "\n".join(merge_query)
         session.run(merge_query + """
-        MERGE (a1)<-[:OWNER_OF]-(e1:Entity {entity_id: 1})
+        MERGE (a1)<-[:OWNER_OF]-(e1:Entity {entity_id: "1"})
         MERGE (a1)-[:GENERATES]->(a2)
-        MERGE (a2)<-[:OWNER_OF]-(e2:Entity {entity_id: 2})
+        MERGE (a2)<-[:OWNER_OF]-(e2:Entity {entity_id: "2"})
         MERGE (e2)-[:OWNER_OF]->(a3)
         MERGE (a3)-[:GENERATES]->(a4)
-        MERGE (a4)<-[:OWNER_OF]-(e3:Entity {entity_id: 3})
+        MERGE (a4)<-[:OWNER_OF]-(e3:Entity {entity_id: "3"})
         MERGE (e3)-[:OWNER_OF]->(a5)
         MERGE (a5)<-[:GENERATES]-(a6)
         MERGE (e1)-[:OWNER_OF]->(a6)
