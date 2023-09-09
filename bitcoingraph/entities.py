@@ -314,13 +314,11 @@ class EntityGrouping:
             result = session.run("""
             UNWIND $addresses as address
             MATCH (a:Address {address: address}) 
-            WITH collect(a) as addrs
-            
+            WITH a
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
-            WHERE a in addrs
-            
-            WITH addrs, e ORDER BY e.entity_id ASC
-            WITH addrs, COLLECT(e)[0] as minEntity, tail(collect(distinct e)) as entities
+            WITH a, e
+            WITH collect(distinct a) as addrs, collect(distinct e) as entities
+            WITH addrs, entities[0] as minEntity, tail(entities) as entities
             
             // Keeping entity name or creating new one
             WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
@@ -351,7 +349,7 @@ class EntityGrouping:
                 MATCH (e)
                 DETACH DELETE (e)
             }
-            """, addresses=list(addresses), max_entity_id=max_entity_id)
+            """, addresses=list(addresses), max_entity_id=str(max_entity_id))
             max_entity_id += 1
 
 
