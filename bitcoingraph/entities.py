@@ -302,10 +302,6 @@ class EntityGrouping:
                                  desc="Saving entities")
         else:
             iterator = self.entity_idx_to_addresses.items()
-
-        max_entity_id = session.run("""MATCH (e:Entity) RETURN e.entity_id as eid ORDER BY e.entity_id DESC LIMIT 1""").single()['eid']
-        # just to avoid a potential conflict, add some random amount to the max_entity_id
-        max_entity_id += random.randint(100,1000)
         for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
@@ -318,7 +314,7 @@ class EntityGrouping:
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
             WITH a, e
             WITH collect(distinct a) as addrs, collect(distinct e) as entities
-            WITH addrs, entities[0] as minEntity, tail(entities) as entities
+            WITH addrs, addrs[0].address as minA, entities[0] as minEntity, tail(entities) as entities
             
             // Keeping entity name or creating new one
             WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
@@ -328,9 +324,9 @@ class EntityGrouping:
             END AS entityName
 
             CALL {
-                WITH minEntity, addrs 
-                WITH minEntity, addrs WHERE minEntity IS NULL
-                CREATE (e:Entity {entity_id: $max_entity_id})
+                WITH minEntity, addrs, minA
+                WITH minEntity, addrs, minA WHERE minEntity IS NULL
+                CREATE (e:Entity {entity_id: minA})
                 WITH *
                 UNWIND addrs as a
                 MERGE (e)-[:OWNER_OF]->(a)
@@ -349,8 +345,7 @@ class EntityGrouping:
                 MATCH (e)
                 DETACH DELETE (e)
             }
-            """, addresses=list(addresses), max_entity_id=str(max_entity_id))
-            max_entity_id += 1
+            """, addresses=list(addresses))
 
 
 def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
