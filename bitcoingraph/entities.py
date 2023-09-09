@@ -273,28 +273,6 @@ class EntityGrouping:
             self.entity_idx_counter += 1
             self.counter_entities += 1
 
-    # def empty_old(self, distance: int):
-    #     to_delete = set([])
-    #     to_return = {}
-    #     for entity_idx, last_updated_value in self.last_updated.items():
-    #         if self.entity_idx_counter - last_updated_value > distance:
-    #
-    #             address_set = self.entity_idx_to_addresses[entity_idx]
-    #             self.entity_idx_to_addresses[entity_idx] = None
-    #             for addr in address_set:
-    #                 self.address_to_entity_idx.pop(addr)
-    #
-    #             to_delete.add(entity_idx)
-    #             to_return[entity_idx] = address_set
-    #
-    #     for k in to_delete:
-    #         self.last_updated.pop(k)
-    #
-    #     self.last_empty = self.entity_idx_counter
-    #     return to_return
-
-
-
     def save_entities(self, session: 'neo4j.Session', display_progress=False):
         if display_progress:
             raise DeprecationWarning("Not maintained")
@@ -305,47 +283,46 @@ class EntityGrouping:
         for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
-
+            addresses = list(addresses)
 
             result = session.run("""
             UNWIND $addresses as address
             MATCH (a:Address {address: address}) 
             WITH a
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
-            WITH a, e
-            WITH collect(distinct a) as addrs, collect(distinct e) as entities
-            WITH addrs, addrs[0].address as minA, entities[0] as minEntity, tail(entities) as entities
-            
-            // Keeping entity name or creating new one
-            WITH *, coalesce(reduce(s = coalesce(minEntity.name, ""), node IN entities | s+"+"+node.name), minEntity.name) AS entityName
-            WITH *, CASE 
-                WHEN entityName STARTS WITH "+" THEN substring(entityName, 1) 
-                ELSE entityName 
-            END AS entityName
+            return collect(e.entity_id) as entities, collect(distinct e.name) as entity_names
+            """, addresses=addresses).data()
+            entities = result[0]["entities"]
+            entity_names = result[0]["entity_names"]
+            entity_name = "+".join(entity_names) if entity_names else None
 
-            CALL {
-                WITH minEntity, addrs, minA
-                WITH minEntity, addrs, minA WHERE minEntity IS NULL
-                CREATE (e:Entity {entity_id: minA})
-                WITH *
-                UNWIND addrs as a
-                MERGE (e)-[:OWNER_OF]->(a)
-            
-                UNION 
-                
-                WITH minEntity, addrs, entities, entityName
-                WITH minEntity, addrs, entities, entityName 
-                    WHERE minEntity IS NOT NULL
-                SET minEntity.name = entityName
-                WITH *
-                MATCH (a:Address) WHERE a in addrs
-                MERGE (minEntity)-[:OWNER_OF]->(a)
-                WITH entities
-                UNWIND entities as e
-                MATCH (e)
-                DETACH DELETE (e)
-            }
-            """, addresses=list(addresses))
+            if entities:
+                entities.sort()
+                result = session.run("""
+                UNWIND $entity_ids as entity_id
+                MATCH (e:Entity {entity_id: entity_id})
+                WITH collect(e) as entities
+                CALL apoc.refactor.mergeNodes(entities, {properties: {
+                    entity_id: 'discard',
+                    name:'combine'
+                }})
+                YIELD node
+                SET node.name = $entity_name
+                WITH node as new_entity
+                UNWIND $addresses as address
+                MATCH (a:Address {address: address})
+                MERGE (a)<-[:OWNER_OF]-(new_entity)
+                RETURN count(a)
+                """, entity_ids=entities, addresses=addresses, entity_name=entity_name).data()
+            else:
+                addresses.sort()
+                session.run("""
+                CREATE (e:Entity {entity_id: $entity_id})
+                WITH e
+                UNWIND $addresses as address
+                MATCH (a:Address {address: address})
+                MERGE (a)<-[:OWNER_OF]-(e)
+                """, entity_id=addresses[0], addresses=addresses)
 
 
 def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
