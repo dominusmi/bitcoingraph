@@ -151,7 +151,7 @@ class BitcoinGraph:
                                   'outputs', 'rel_output_address']:
                     sort(output_path, base_name + '.csv', '-u')
 
-    def synchronize(self, max_height=None):
+    def synchronize(self, max_height=None, lag=0):
         """Synchronise the graph database with the blockchain
         information from the bitcoin client.
         """
@@ -160,7 +160,7 @@ class BitcoinGraph:
             start = 0
         else:
             start = self.graph_db.get_max_block_height() + 1
-        blockchain_end = self.blockchain.get_max_block_height() - 2
+        blockchain_end = self.blockchain.get_max_block_height() - lag
         if start > blockchain_end:
             return
         else:
@@ -173,9 +173,12 @@ class BitcoinGraph:
 
             logger.info(f"Getting blocks in range {start}-{end}")
             for block in self.blockchain.get_blocks_in_range(start, end):
+                if block.height >= self.blockchain.get_max_block_height() - lag:
+                    return
                 logger.info("Adding block")
                 self.graph_db.add_block(block)
                 yield block.height
+
 
 
 def compute_entities(input_path, sort_input=True, sort_output_address=False):

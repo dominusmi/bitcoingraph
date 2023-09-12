@@ -33,6 +33,8 @@ parser.add_argument('--neo4j-protocol', default="bolt://",
                     help='Neo4j protocol. Defaults to bolt://')
 parser.add_argument('-b', '--max-height', type=int, default=1_000_000_000_000,
                     help='Max block height to reach')
+parser.add_argument('-l', '--lag', type=int, required=True,
+                    help='How many blocks to keep in safety buffer in case of re-organisation')
 
 
 def thread_synchronization(bcgraph: BitcoinGraph, max_height: int, queue_new_block: queue.Queue,
@@ -75,7 +77,7 @@ def thread_wrapper(f, data_queue: queue.Queue, stop_queue: queue.Queue):
 seen_addresses = set([])
 
 def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, neo4j_user, neo4j_password,
-         neo4j_protocol, max_height):
+         neo4j_protocol, max_height, lag):
     blockchain = {'host': bc_host, 'port': bc_port,
                   'rpc_user': bc_user, 'rpc_pass': bc_password}
     if rest:
@@ -83,11 +85,20 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
     neo4j_cfg = {'host': neo4j_host, 'port': neo4j_port,
                  'user': neo4j_user, 'pass': neo4j_password}
 
+    if lag <= 4:
+        logger.warn(f"You have chosen a lag of {lag} which is below the recommended 5. This is considered dangerous as, "
+                    f"if there's any re-organisation of the block maximum-{lag}, then the block will already have been "
+                    f"loaded on neo4j, and it will crash the daemon. The latest blocks will have to be manually removed "
+                    f"and added again. It is strongly recommended to keep a lag > 4")
+        if input("I understand the risk and want to proceed [y/n]").strip().lower() != "y":
+            logger.info("Exiting")
+
+
     finished_sync = False
     bcgraph = BitcoinGraph(blockchain=blockchain, neo4j=neo4j_cfg)
     logger.info(f"Starting daemon. Running with max height {max_height}")
     while True:
-        for _ in bcgraph.synchronize(max_height):
+        for _ in bcgraph.synchronize(max_height, lag):
             finished_sync = False
 
         if not finished_sync:
