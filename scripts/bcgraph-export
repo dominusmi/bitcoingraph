@@ -24,8 +24,6 @@ parser.add_argument('endheight', type=int,
                     help='End block height')
 parser.add_argument('-o', '--output_path', type=str,
                     help='Output path')
-parser.add_argument('--no-transaction-deduplication', action='store_true',
-                    help='Skip deduplication of transactions')
 parser.add_argument("-u", "--user", required=True,
                     help="Bitcoin Core RPC username")
 parser.add_argument("-p", "--password", required=True,
@@ -64,5 +62,4 @@ if __name__ == "__main__":
         args.startheight,
         args.endheight,
         args.output_path,
-        progress,
-        not args.no_transaction_deduplication)
+        progress)

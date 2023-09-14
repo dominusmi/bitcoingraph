@@ -127,7 +127,7 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
-    def export(self, start, end, output_path=None, progress=None, deduplicate_transactions=True):
+    def export(self, start, end, output_path=None, progress=None):
         """Export the blockchain into CSV files."""
         if output_path is None:
             output_path = 'blocks_{}_{}'.format(start, end)
@@ -145,10 +145,9 @@ class BitcoinGraph:
 
         print("\nWriting blocks finished. Running sorts.")
         sort(output_path, 'addresses.csv', '-u')
-        if deduplicate_transactions:
-            for base_name in ['transactions', 'rel_tx_output',
-                              'outputs', 'rel_output_address']:
-                sort(output_path, base_name + '.csv', '-u')
+        for base_name in ['transactions', 'rel_tx_output',
+                          'outputs', 'rel_output_address']:
+            sort(output_path, base_name + '.csv', '-u')
 
     def synchronize(self, max_height=None, lag=0):
         """Synchronise the graph database with the blockchain
