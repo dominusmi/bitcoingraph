@@ -2,6 +2,7 @@
 
 import argparse
 import queue
+import sys
 from time import sleep
 
 from bitcoingraph.bitcoingraph import BitcoinGraph
@@ -92,6 +93,7 @@ def main(bc_host, bc_port, bc_user, bc_password, rest, neo4j_host, neo4j_port, n
                     f"and added again. It is strongly recommended to keep a lag > 4")
         if input("I understand the risk and want to proceed [y/n]").strip().lower() != "y":
             logger.info("Exiting")
+            sys.exit()
 
 
     finished_sync = False
