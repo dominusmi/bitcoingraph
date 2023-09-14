@@ -35,8 +35,8 @@ parser.add_argument("-P", "--port", default=8332, type=int,
 parser.add_argument("--ssh",
                     help="Path containing paramiko ssh configs in json format")
 parser.add_argument("--cache", type=str,
-                    help="If provided, should be a string to an existing directory in "
-                         "which to save/load .json block files. Only used with REST method")
+                    help="Directory path. Uses the directory to save/fetch already downloaded blocks. Useful only for "
+                         "development/debugging purposes")
 parser.add_argument("--timeout", type=int,
                     help="Bitcoin Core request timeout")
 

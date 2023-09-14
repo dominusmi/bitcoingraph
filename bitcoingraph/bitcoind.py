@@ -195,24 +195,20 @@ class BitcoinProxy:
         :return: block as JSON
         :rtype: str
         """
+        if self._cache_path:
+            try:
+                return self._get_from_cache(block_hash)
+            except Exception as e:
+                print(f"Failed to parse json {self._block_cache_path(block_hash)}, getting new")
+
         if self.method == 'REST':
+            r = self._rest_proxy.get_block(block_hash)
             if self._cache_path:
-                r = None
-
-                try:
-                    r = self._get_from_cache(block_hash)
-                except Exception as e:
-                    print(f"Failed to parse json {self._block_cache_path(block_hash)}, defaulting to REST")
-
-                if r is None:
-                    r = self._rest_proxy.get_block(block_hash)
-                    self._write_to_cache(r, block_hash)
-
-            else:
-                r = self._rest_proxy.get_block(block_hash)
-
+                self._write_to_cache(r, block_hash)
         else:
             r = self._jsonrpc_proxy.call('getblock', block_hash, 3)
+            if self._cache_path:
+                self._write_to_cache(r, block_hash)
         return r
 
     def getblockcount(self):
