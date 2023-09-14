@@ -127,14 +127,14 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
-    def export(self, start, end, output_path=None, plain_header=False, separate_header=True,
+    def export(self, start, end, output_path=None, separate_header=True,
                progress=None, deduplicate_transactions=True):
         """Export the blockchain into CSV files."""
         if output_path is None:
             output_path = 'blocks_{}_{}'.format(start, end)
 
         number_of_blocks = end - start + 1
-        with CSVDumpWriter(output_path, plain_header, separate_header) as writer:
+        with CSVDumpWriter(output_path, separate_header) as writer:
             for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
                 writer.write(block)
                 if progress:
