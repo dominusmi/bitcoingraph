@@ -2,6 +2,7 @@
 - [Neo4j pointers and examples](#neo4j-pointers)
 - [Using your own bitcoin node](#own-bitcoin-node)
 - [Compute entities extended explanation](#entities-process)
+- [SSH Paramiko Config Example](#ssh-config)
 
 <a name="hardware-requirements"></a>
 ## Hardware requirements
@@ -180,3 +181,17 @@ part of an entity).
 
 The `bcgraph-compute-entities` is basically a database specialized for this very specific
 file format and objective.
+
+
+<a name="ssh-config"></a>
+## Paramiko SSH config example
+```json
+{
+  "hostname":"127.0.0.1",
+  "port":7472,
+  "username":"username",
+  "password":"password",
+  "allow_agent":false,
+  "look_for_keys":false
+}
+```
