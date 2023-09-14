@@ -36,9 +36,9 @@ def sort(path, filename, args=''):
         os.mkdir(tmp)
     cpus = os.cpu_count()
     if sys.platform == 'darwin':
-        s = 'LC_ALL=C gsort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
+        s = 'LC_ALL=C gsort -T /tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
     else:
-        s = 'LC_ALL=C sort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
+        s = 'LC_ALL=C sort -T /tmp -S 50% --parallel=' + str(cpus) + ' {0} {1} -o {1}'
     status = subprocess.call(s.format(args, os.path.join(path, filename)), shell=True)
     if status != 0:
         raise Exception('unable to sort file: {}'.format(filename))
