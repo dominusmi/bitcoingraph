@@ -6,9 +6,8 @@ from bitcoingraph.model import Block
 
 class CSVDumpWriter:
 
-    def __init__(self, output_path, separate_header=True):
+    def __init__(self, output_path):
         self._output_path = output_path
-        self._separate_header = separate_header
 
         if not os.path.exists(output_path):
             os.makedirs(output_path)
@@ -58,8 +57,7 @@ class CSVDumpWriter:
         self._rel_output_address_file.close()
 
     def _write_header(self, filename, row):
-        if self._separate_header:
-            filename += '_header'
+        filename += '_header'
         with open(self._get_path(filename), 'w') as f:
             writer = csv.writer(f)
             header = row

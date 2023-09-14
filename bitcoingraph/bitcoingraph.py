@@ -127,14 +127,13 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
-    def export(self, start, end, output_path=None, separate_header=True,
-               progress=None, deduplicate_transactions=True):
+    def export(self, start, end, output_path=None, progress=None, deduplicate_transactions=True):
         """Export the blockchain into CSV files."""
         if output_path is None:
             output_path = 'blocks_{}_{}'.format(start, end)
 
         number_of_blocks = end - start + 1
-        with CSVDumpWriter(output_path, separate_header) as writer:
+        with CSVDumpWriter(output_path) as writer:
             for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
                 writer.write(block)
                 if progress:
@@ -143,13 +142,13 @@ class BitcoinGraph:
                     percentage = (processed_blocks * 100) // number_of_blocks
                     if percentage > last_percentage:
                         progress(processed_blocks / number_of_blocks)
-        if separate_header:
-            print("\nWriting blocks finished. Running sorts.")
-            sort(output_path, 'addresses.csv', '-u')
-            if deduplicate_transactions:
-                for base_name in ['transactions', 'rel_tx_output',
-                                  'outputs', 'rel_output_address']:
-                    sort(output_path, base_name + '.csv', '-u')
+
+        print("\nWriting blocks finished. Running sorts.")
+        sort(output_path, 'addresses.csv', '-u')
+        if deduplicate_transactions:
+            for base_name in ['transactions', 'rel_tx_output',
+                              'outputs', 'rel_output_address']:
+                sort(output_path, base_name + '.csv', '-u')
 
     def synchronize(self, max_height=None, lag=0):
         """Synchronise the graph database with the blockchain
