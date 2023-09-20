@@ -127,26 +127,25 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
-    def export(self, start, end, output_path=None, progress=None):
+    def export(self, start, end, output_path=None, progress=None, sort_only=False):
         """Export the blockchain into CSV files."""
-        if output_path is None:
-            output_path = 'blocks_{}_{}'.format(start, end)
+        if not sort_only:
+            if output_path is None:
+                output_path = 'blocks_{}_{}'.format(start, end)
 
-        number_of_blocks = end - start + 1
-        with CSVDumpWriter(output_path) as writer:
-            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
-                writer.write(block)
-                if progress:
-                    processed_blocks = block.height - start + 1
-                    last_percentage = ((processed_blocks - 1) * 100) // number_of_blocks
-                    percentage = (processed_blocks * 100) // number_of_blocks
-                    if percentage > last_percentage:
-                        progress(processed_blocks / number_of_blocks)
+            number_of_blocks = end - start + 1
+            with CSVDumpWriter(output_path) as writer:
+                for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
+                    writer.write(block)
+                    if progress:
+                        processed_blocks = block.height - start + 1
+                        last_percentage = ((processed_blocks - 1) * 100) // number_of_blocks
+                        percentage = (processed_blocks * 100) // number_of_blocks
+                        if percentage > last_percentage:
+                            progress(processed_blocks / number_of_blocks)
 
         print("\nWriting blocks finished. Running sorts.")
-        sort(output_path, 'addresses.csv', '-u')
-        for base_name in ['transactions', 'rel_tx_output',
-                          'outputs', 'rel_output_address']:
+        for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
             sort(output_path, base_name + '.csv', '-u')
 
     def synchronize(self, max_height=None, lag=0):

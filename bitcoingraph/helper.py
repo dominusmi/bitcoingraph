@@ -31,16 +31,18 @@ def to_json(raw_data):
                       indent=4, separators=(',', ': '))
 
 
-def sort(path, filename, args=''):
-    path = Path(path).resolve()
-    tmp = path.joinpath('/tmp')
-    if not os.path.exists(tmp):
-        os.mkdir(tmp)
+def sort(output_directory, filename, args=''):
+    output_directory = Path(output_directory).resolve()
+    tmp_directory = output_directory.joinpath('tmp')
+    if not os.path.exists(tmp_directory):
+        os.mkdir(tmp_directory)
     cpus = os.cpu_count()
     if sys.platform == 'darwin':
-        s = 'LC_ALL=C gsort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {1} {2} -o {2}'
+        s = 'LC_ALL=C gsort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
     else:
-        s = 'LC_ALL=C sort -T {0}/tmp -S 50% --parallel=' + str(cpus) + ' {1} {2} -o {2}'
-    status = subprocess.call(s.format(path.absolute(), args, os.path.join(path, filename)), shell=True)
-    if status != 0:
+        s = 'LC_ALL=C sort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
+    status = subprocess.call(s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=tmp_directory.joinpath(filename)), shell=True)
+    if status == 0:
+        os.replace(tmp_directory.joinpath(filename), output_directory.joinpath(filename))
+    else:
         raise Exception('unable to sort file: {}'.format(filename))

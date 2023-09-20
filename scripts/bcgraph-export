@@ -39,6 +39,9 @@ parser.add_argument("--cache", type=str,
                          "development/debugging purposes")
 parser.add_argument("--timeout", type=int,
                     help="Bitcoin Core request timeout")
+parser.add_argument("--sort-only", default=False, action="store_true",
+                    help="Skip processing and only sort output csv files")
+
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
@@ -62,4 +65,5 @@ if __name__ == "__main__":
         args.startheight,
         args.endheight,
         args.output_path,
-        progress)
+        progress,
+        args.sort_only)
