@@ -144,8 +144,9 @@ class BitcoinGraph:
                         if percentage > last_percentage:
                             progress(processed_blocks / number_of_blocks)
 
-        print("\nWriting blocks finished. Running sorts.")
+        print("\nWriting blocks finished. Running sorts. This will take a long time.")
         for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
+            print(f"Sorting {base_name}.csv")
             sort(output_path, base_name + '.csv', '-u')
 
     def synchronize(self, max_height=None, lag=0):
