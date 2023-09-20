@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -34,8 +35,12 @@ def to_json(raw_data):
 def sort(output_directory, filename, args=''):
     output_directory = Path(output_directory).resolve()
     tmp_directory = output_directory.joinpath('tmp')
-    if not os.path.exists(tmp_directory):
+
+    if os.path.exists(tmp_directory):
+        shutil.rmtree(tmp_directory)
+    else:
         os.mkdir(tmp_directory)
+
     cpus = os.cpu_count()
     if sys.platform == 'darwin':
         s = 'LC_ALL=C gsort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
