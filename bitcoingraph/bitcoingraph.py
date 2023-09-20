@@ -39,10 +39,18 @@ class BitcoinGraph:
 
     def __init__(self, **config):
         """Create an instance based on the configuration."""
-        self.blockchain = self.__get_blockchain(config['blockchain'])
+        self._blockchain = None
+        self.blockchain_config = config['blockchain']
         if 'neo4j' in config:
             nc = config['neo4j']
             self.graph_db = GraphController(nc['host'], nc['port'], nc['user'], nc['pass'])
+
+    @property
+    def blockchain(self):
+        if self._blockchain is None:
+            self._blockchain = self.__get_blockchain(self.blockchain_config)
+        return self._blockchain
+        
 
     @staticmethod
     def __get_blockchain(config):
