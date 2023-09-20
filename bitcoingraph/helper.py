@@ -38,15 +38,17 @@ def sort(output_directory, filename, args=''):
 
     if os.path.exists(tmp_directory):
         shutil.rmtree(tmp_directory)
-    else:
-        os.mkdir(tmp_directory)
+    os.mkdir(tmp_directory)
 
     cpus = os.cpu_count()
     if sys.platform == 'darwin':
         s = 'LC_ALL=C gsort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
     else:
         s = 'LC_ALL=C sort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
-    status = subprocess.call(s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=tmp_directory.joinpath(filename)), shell=True)
+
+    cmd = s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=tmp_directory.joinpath(filename))
+    print(f"Running: \n{cmd}")
+    status = subprocess.call(cmd, shell=True)
     if status == 0:
         os.replace(tmp_directory.joinpath(filename), output_directory.joinpath(filename))
     else:
