@@ -66,18 +66,25 @@ if __name__ == "__main__":
     chunk_size = args.read_size
     started_processing_pk = False
 
+    path_rel_address_address = path.joinpath("rel_address_address.csv")
+    path_rel_entity_address = path.joinpath("rel_entity_address.csv.tmpcopy")
+    path_rel_entity_address_original = path.joinpath("rel_entity_address.csv")
+
     with open(path.joinpath("pk2addresses.csv"), "w+") as _:
         pass
     with open(path.joinpath("new_addresses.csv"), "w+") as _:
         pass
-    with open(path.joinpath("rel_address_address.csv"), "w+") as _:
+    with open(path_rel_address_address, "w+") as _:
         pass
 
-    with open(path.joinpath("rel_entity_address.csv")) as f:
+    with open(path_rel_entity_address_original) as f:
         f.seek(0,os.SEEK_END)
         f.seek(f.tell()-500)
         lines = f.readlines()
         current_entity_id = int(lines[-1].split(",")[0]) + 1
+
+    print("Create copy of rel_entity_address.csv")
+    shutil.copy(path_rel_entity_address_original, path_rel_entity_address)
 
 
     with open(path.joinpath("addresses.csv"), "r") as fa:
@@ -117,23 +124,23 @@ if __name__ == "__main__":
                 date = datetime.datetime.utcnow()
                 print(f'{date.strftime("%Y-%m-%d %H:%M:%S")} Processed {line_number} addresses')
 
-                with open(path.joinpath("rel_address_address.csv"), "a") as output:
+                with open(path_rel_address_address, "a") as output:
                     output.write("\n".join(batch_write_rel_address_address) + "\n")
 
-                with open(path.joinpath("rel_entity_address.csv"), "a") as output:
+                with open(path_rel_entity_address, "a") as output:
                     output.write("\n".join(batch_write_rel_entity_address) + "\n")
                 batch_write_rel_address_address = []
                 batch_write_rel_entity_address = []
 
         if batch_write_rel_address_address:
-            with open(path.joinpath("rel_address_address.csv"), "a") as output:
+            with open(path_rel_address_address, "a") as output:
                 output.write("\n".join(batch_write_rel_address_address) + "\n")
     fa.close()
 
     pkh_addresses = []
     pk_lines = 0
     print("Reading pk2pkh addresses")
-    with open(path.joinpath("rel_address_address.csv"), "r") as fr:
+    with open(path_rel_address_address, "r") as fr:
         for line_number, line in enumerate(line_reader(fr, chunk_size)):
             address = line.rsplit(",", 1)[-1]
             pkh_addresses.append(address)
@@ -180,14 +187,7 @@ if __name__ == "__main__":
     print("Keep original addresses.csv in case of error as addresses.csv.original")
     shutil.move(path.joinpath("addresses.csv"), path.joinpath("addresses.csv.original"))
     shutil.move(path.joinpath("new_addresses.csv"), path.joinpath("addresses.csv"))
-    # Sanity check and completion
-    # print("pklines: " + str(pk_lines)  + " addresslines: " + str(addresses))
-    # if not addresses.csv lines + pk2addresses.csv lines == new_addresses.csv lines:
-    #     print("Something went wrong")
-    #    break
-    # else
-    #    sort unique new_addresses.csv
-    #    overwrite addresses.csv with new_addresses.csv
-    #    print completion message and a copy/paste neo4j CSV import command.
 
-    # Do all this manually for now.
+    print("Keep original rel_entity_address.csv in case of error as rel_entity_address.csv.original")
+    shutil.move(path_rel_entity_address_original, path.joinpath("rel_entity_address.csv.original"))
+    shutil.move(path_rel_entity_address, path_rel_entity_address_original)
