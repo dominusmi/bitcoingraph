@@ -46,10 +46,10 @@ def sort(output_directory, filename, args=''):
     else:
         s = 'LC_ALL=C sort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
 
-    cmd = s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=tmp_directory.joinpath(filename))
+    cmd = s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=output_directory.joinpath(filename+".sorted"))
     print(f"Running: \n{cmd}")
     status = subprocess.call(cmd, shell=True)
     if status == 0:
-        os.replace(tmp_directory.joinpath(filename), output_directory.joinpath(filename))
+        os.replace(output_directory.joinpath(filename+".sorted"), output_directory.joinpath(filename))
     else:
         raise Exception('unable to sort file: {}'.format(filename))
