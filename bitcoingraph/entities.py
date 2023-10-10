@@ -273,13 +273,8 @@ class EntityGrouping:
             self.entity_idx_counter += 1
             self.counter_entities += 1
 
-    def save_entities(self, session: 'neo4j.Session', display_progress=False):
-        if display_progress:
-            raise DeprecationWarning("Not maintained")
-            iterator = tqdm.tqdm(self.entity_idx_to_addresses.items(), total=len(self.entity_idx_to_addresses),
-                                 desc="Saving entities")
-        else:
-            iterator = self.entity_idx_to_addresses.items()
+    def save_entities(self, session: 'neo4j.Session'):
+        iterator = self.entity_idx_to_addresses.items()
         for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
             if len(addresses) <= 1:
                 continue
@@ -290,31 +285,16 @@ class EntityGrouping:
             MATCH (a:Address {address: address}) 
             WITH a
             OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
-            return collect(e.entity_id) as entities, collect(distinct e.name) as entity_names
+            OPTIONAL MATCH (e)-[rel:OWNER_OF]->()
+            return e.entity_id as eid, e.name as name, count(rel) as count_rel
             """, addresses=addresses).data()
-            entities = result[0]["entities"]
-            entity_names = result[0]["entity_names"]
+
+            entities = [x['eid'] for x in result if x['eid'] is not None]
+            entity_names = [x['name'] for x in result if x['name'] is not None]
+            count_relationships = [x['count_rel'] for x in result if x['count_rel'] > 0]
             entity_name = "+".join(entity_names) if entity_names else None
 
-            if entities:
-                entities.sort()
-                result = session.run("""
-                UNWIND $entity_ids as entity_id
-                MATCH (e:Entity {entity_id: entity_id})
-                WITH collect(e) as entities
-                CALL apoc.refactor.mergeNodes(entities, {properties: {
-                    entity_id: 'discard',
-                    name:'combine'
-                }})
-                YIELD node
-                SET node.name = $entity_name
-                WITH node as new_entity
-                UNWIND $addresses as address
-                MATCH (a:Address {address: address})
-                MERGE (a)<-[:OWNER_OF]-(new_entity)
-                RETURN count(a)
-                """, entity_ids=entities, addresses=addresses, entity_name=entity_name).data()
-            else:
+            if len(entities) == 0:
                 addresses.sort()
                 session.run("""
                 CREATE (e:Entity {entity_id: $entity_id})
@@ -323,6 +303,37 @@ class EntityGrouping:
                 MATCH (a:Address {address: address})
                 MERGE (a)<-[:OWNER_OF]-(e)
                 """, entity_id=addresses[0], addresses=addresses)
+            elif len(entities) == 1:
+                query = """
+                UNWIND $addresses AS address
+                MATCH (a:Address {address: address})
+                WITH a
+                MATCH (e:Entity {entity_id: $entity_id})
+                MERGE (e)-[:OWNER_OF]->(a)
+                """
+                session.run(query, entity_id=entities[0], addresses=addresses)
+            else:
+                # sort entities by number of relationships
+                entities = [x for _, x in sorted(zip(count_relationships, entities), reverse=True)]
+                set_entity_name = f"SET e.name = $entity_name" if entity_name else ''
+                query = """
+                    UNWIND $small_entities as sme_id
+                    MATCH (e:Entity {entity_id: sme_id})-[:OWNER_OF]->(a)
+                    CALL {
+                        WITH e
+                        DETACH DELETE e
+                    }
+                    WITH a
+                    UNWIND $addresses as address
+                    MATCH (all_a: Address {address: address})
+                    WITH distinct collect(a)+collect(all_a) as all_addresses
+                    UNWIND all_addresses as a
+                    MATCH (e:Entity {entity_id: $large_entity})
+                    CREATE (a)<-[:OWNER_OF]-(e)
+                    %s
+                    """ % set_entity_name
+
+                session.run(query, small_entities=entities[1:], large_entity=entities[0], entity_name=entity_name, addresses=addresses)
 
 
 def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
@@ -401,7 +412,7 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
 
     with driver.session() as session:
         sleep(1)
-        entity_grouping.save_entities(session, display_progress=True)
+        entity_grouping.save_entities(session)
 
 
 def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[str]], pk_to_addresses: Dict[str, List[str]]):
