@@ -175,7 +175,8 @@ class BitcoinGraph:
             else:
                 end = min(max_height, blockchain_end)
             if start >= end:
-                return
+                logger.warn(f"Start ({start}) >= end ({end}). Exiting.")
+                raise StopIteration
 
             logger.info(f"Getting blocks in range {start}-{end}")
             for block in self.blockchain.get_blocks_in_range(start, end):
@@ -184,6 +185,9 @@ class BitcoinGraph:
                 logger.info("Adding block")
                 self.graph_db.add_block(block)
                 yield block.height
+                if block.height >= max_height:
+                    logger.info("Reached max height. Exiting")
+                    raise StopIteration
 
 
 
