@@ -418,7 +418,7 @@ def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
 def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[str]], pk_to_addresses: Dict[str, List[str]]):
     entity_grouping = EntityGrouping()
 
-    logger.info("Computing entities")
+    logger.info("- Computing")
     for k, v in pk_to_addresses.items():
         addresses = set(v)
         addresses.add(k)
@@ -427,5 +427,5 @@ def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[
     for addresses in addresses_per_transaction:
         entity_grouping.update_from_address_group(list(addresses))
 
-    logger.info("Saving entities")
+    logger.info("- Preparing queries")
     entity_grouping.save_entities(session)
