@@ -16,12 +16,15 @@ def progress(p=0):
     sys.stdout.write('\rProgress: {}%'.format(p))
     sys.stdout.flush()
 
+
 parser = argparse.ArgumentParser(
     description='Export transactions from blockchain')
 parser.add_argument('startheight', type=int,
                     help='Start block height')
 parser.add_argument('endheight', type=int,
                     help='End block height')
+parser.add_argument('-r', '--resume', action="store_true",
+                    help='If provided, then start height is ignored and the process is resumed from the last block')
 parser.add_argument('-o', '--output_path', type=str,
                     help='Output path')
 parser.add_argument("-u", "--user", required=True,
@@ -42,7 +45,6 @@ parser.add_argument("--timeout", type=int,
 parser.add_argument("--sort-only", default=False, action="store_true",
                     help="Skip processing and only sort output csv files")
 
-
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
         parser.print_help()
@@ -60,10 +62,10 @@ if __name__ == "__main__":
                     'method': 'REST', 'cache_path': args.cache, 'ssh_tunnel': ssh_tunnel,
                     'timeout': args.timeout})
 
-
     bcgraph.export(
         args.startheight,
         args.endheight,
         args.output_path,
         progress,
-        args.sort_only)
+        args.sort_only,
+        args.resume)

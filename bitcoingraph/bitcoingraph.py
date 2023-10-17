@@ -5,6 +5,8 @@ A Python library for extracting and navigating graph structures from
 the Bitcoin block chain.
 
 """
+import os
+from pathlib import Path
 
 from bitcoingraph.logger import get_logger
 
@@ -50,7 +52,6 @@ class BitcoinGraph:
         if self._blockchain is None:
             self._blockchain = self.__get_blockchain(self.blockchain_config)
         return self._blockchain
-        
 
     @staticmethod
     def __get_blockchain(config):
@@ -135,15 +136,58 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
-    def export(self, start, end, output_path=None, progress=None, sort_only=False):
+    def resume_export(self, end, output_path, progress=None, resume=False):
+        assert output_path is not None, "When using resume, output path must be provided."
+
+        # Get latest block exported
+        output_path = Path(output_path)
+        assert output_path.joinpath("blocks.csv").exists(), "When using resume, the blocks.csv must exist"
+        with open(output_path.joinpath("blocks.csv")) as f:
+            for line in f.readlines():
+                pass
+            start = int(line.split(",")[1]) + 1
+
+        # setup outpath as {outpath}/resume
+        assert output_path.exists(), "When using resume, output path must exist."
+        output_path = output_path.joinpath("resume")
+        if output_path.exists():
+            os.rmdir(output_path.resolve().absolute().__str__())
+        output_path.mkdir(exist_ok=True)
+
+        # actually start resume
+        number_of_blocks = end - start + 1
+        with CSVDumpWriter(output_path) as writer:
+            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end - start):
+                writer.write(block)
+                if progress:
+                    processed_blocks = block.height - start + 1
+                    last_percentage = ((processed_blocks - 1) * 100) // number_of_blocks
+                    percentage = (processed_blocks * 100) // number_of_blocks
+                    if percentage > last_percentage:
+                        progress(processed_blocks / number_of_blocks)
+
+        self.sort(output_path)
+
+    @staticmethod
+    def sort(output_path):
+        print("\nWriting blocks finished. Running sorts. This will take a long time.")
+        for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
+            print(f"Sorting {base_name}.csv")
+            sort(output_path, base_name + '.csv', '-u')
+
+    def export(self, start, end, output_path=None, progress=None, sort_only=False, resume=False):
         """Export the blockchain into CSV files."""
+        if resume:
+            self.resume_export(end, output_path, progress)
+            return
+
         if not sort_only:
             if output_path is None:
                 output_path = 'blocks_{}_{}'.format(start, end)
 
             number_of_blocks = end - start + 1
             with CSVDumpWriter(output_path) as writer:
-                for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end-start):
+                for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end - start):
                     writer.write(block)
                     if progress:
                         processed_blocks = block.height - start + 1
@@ -152,10 +196,7 @@ class BitcoinGraph:
                         if percentage > last_percentage:
                             progress(processed_blocks / number_of_blocks)
 
-        print("\nWriting blocks finished. Running sorts. This will take a long time.")
-        for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
-            print(f"Sorting {base_name}.csv")
-            sort(output_path, base_name + '.csv', '-u')
+        self.sort(output_path)
 
     def synchronize(self, max_height=None, lag=0):
         """Synchronise the graph database with the blockchain
@@ -188,7 +229,6 @@ class BitcoinGraph:
                 if block.height >= max_height:
                     logger.info("Reached max height. Exiting")
                     raise StopIteration
-
 
 
 def compute_entities(input_path, sort_input=True, sort_output_address=False):
