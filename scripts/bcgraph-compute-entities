@@ -215,6 +215,7 @@ def iterate_grouped_outputs(batch):
     if current_group:
         yield current_tx, current_group, True
 
+
 def output_distance(out1, out2):
     return int(out1[:4], 16) - int(out2[:4], 16)
 
@@ -331,14 +332,16 @@ def group_back_with_index(sorted_list, sorted_index_list):
 
 
 # @profile
-entity_idx_counter=0
-counter_joined_entities=0
+entity_idx_counter = 0
+counter_joined_entities = 0
+
+
 def process_queue(queued_output_groups: List[List[str]], cache: Cache,
                   output_address_iterator, input_path):
     global entity_idx_counter, counter_joined_entities
     entity_grouping = EntityGrouping()
-    entity_grouping.entity_idx_counter=entity_idx_counter
-    entity_grouping.counter_joined_entities=counter_joined_entities
+    entity_grouping.entity_idx_counter = entity_idx_counter
+    entity_grouping.counter_joined_entities = counter_joined_entities
 
     bar = tqdm(desc="Sorting queue")
     start = time.time_ns()
@@ -423,7 +426,8 @@ def save_entities(entity_idx_to_addresses: typing.Dict[int, typing.Set[str]], in
 
 
 # @profile
-def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int, max_queue_size: int):
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
+            max_queue_size: int):
     print("Preparing cache")
     cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size,
                   path_to_output_address=input_path.joinpath('rel_output_address.csv'))
@@ -448,7 +452,6 @@ def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optiona
 
     except FileNotFoundError:
         pass
-
 
     with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
         header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
@@ -553,6 +556,7 @@ if __name__ == "__main__":
     print("Found {} transactions".format(tot))
 
     start = time.time_ns()
-    process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size, args.max_queue_size)
+    process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size,
+            args.max_queue_size)
     end = time.time_ns()
     print((end - start) / 1e9)

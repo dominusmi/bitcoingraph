@@ -41,10 +41,12 @@ def sort(output_directory, filename, args=''):
     os.mkdir(tmp_directory)
 
     cpus = os.cpu_count()
-    if sys.platform == 'darwin':
-        s = 'LC_ALL=C gsort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
-    else:
-        s = 'LC_ALL=C sort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
+    # I'm not sure why this if/else was used in the first place, since the second
+    # command works on Mac and the first doesn't. Leaving it for the moment
+    # if sys.platform == 'darwin':
+    #     s = 'LC_ALL=C gsort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
+    # else:
+    s = 'LC_ALL=C sort -T {tmp_path} -S 50% --parallel=' + str(cpus) + ' {args} {input_filename} -o {filename}'
 
     cmd = s.format(tmp_path=tmp_directory.absolute(), args=args, input_filename=output_directory.joinpath(filename), filename=output_directory.joinpath(filename+".sorted"))
     print(f"Running: \n{cmd}")

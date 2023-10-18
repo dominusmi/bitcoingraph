@@ -6,6 +6,8 @@ the Bitcoin block chain.
 
 """
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 from bitcoingraph.logger import get_logger
@@ -136,6 +138,22 @@ class BitcoinGraph:
         """Return the current balance of this address."""
         return self.graph_db.get_unspent_bitcoins(address)
 
+    @staticmethod
+    def append_csv(output_path: Path, updates_path: Path):
+        print("Appending new CSVs to previous")
+        for base_name in ['addresses.csv', 'blocks.csv', 'outputs.csv', 'transactions.csv', 'rel_block_block.csv.csv',
+                          'rel_block_tx.csv.csv', 'rel_input.csv', 'rel_output_address.csv', 'rel_tx_output.csv']:
+            receiving_path = output_path.joinpath(base_name)
+            sending_path = updates_path.joinpath(base_name)
+            subprocess.run(f"cat {str(sending_path.expanduser().resolve().absolute())} >> {str(receiving_path.expanduser().resolve().absolute())}", shell=True)
+
+    @staticmethod
+    def sort(output_path):
+        print("\nWriting blocks finished. Running sorts. This will take a long time.")
+        for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
+            print(f"Sorting {base_name}.csv")
+            sort(output_path, base_name + '.csv', '-u')
+
     def resume_export(self, end, output_path, progress=None, resume=False):
         assert output_path is not None, "When using resume, output path must be provided."
 
@@ -149,31 +167,36 @@ class BitcoinGraph:
 
         # setup outpath as {outpath}/resume
         assert output_path.exists(), "When using resume, output path must exist."
+        base_path = Path(output_path)
+
         output_path = output_path.joinpath("resume")
         if output_path.exists():
-            os.rmdir(output_path.resolve().absolute().__str__())
+            shutil.rmtree(str(output_path.resolve().absolute()))
         output_path.mkdir(exist_ok=True)
 
         # actually start resume
-        number_of_blocks = end - start + 1
-        with CSVDumpWriter(output_path) as writer:
-            for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end - start):
-                writer.write(block)
-                if progress:
-                    processed_blocks = block.height - start + 1
-                    last_percentage = ((processed_blocks - 1) * 100) // number_of_blocks
-                    percentage = (processed_blocks * 100) // number_of_blocks
-                    if percentage > last_percentage:
-                        progress(processed_blocks / number_of_blocks)
+        try:
+            number_of_blocks = end - start + 1
+            with CSVDumpWriter(output_path) as writer:
+                for block in tqdm.tqdm(self.blockchain.get_blocks_in_range(start, end), total=end - start):
+                    writer.write(block)
+                    if progress:
+                        processed_blocks = block.height - start + 1
+                        last_percentage = ((processed_blocks - 1) * 100) // number_of_blocks
+                        percentage = (processed_blocks * 100) // number_of_blocks
+                        if percentage > last_percentage:
+                            progress(processed_blocks / number_of_blocks)
+        except KeyboardInterrupt as e:
+            answer = input("Save progress? [y/n]").strip().lower()
+            if answer != "y":
+                print("Exited without saving")
+                raise e
 
-        self.sort(output_path)
+        # merge files together
+        self.append_csv(base_path, output_path)
 
-    @staticmethod
-    def sort(output_path):
-        print("\nWriting blocks finished. Running sorts. This will take a long time.")
-        for base_name in ['addresses', 'transactions', 'rel_tx_output', 'outputs', 'rel_output_address']:
-            print(f"Sorting {base_name}.csv")
-            sort(output_path, base_name + '.csv', '-u')
+        # sort them again
+        self.sort(base_path)
 
     def export(self, start, end, output_path=None, progress=None, sort_only=False, resume=False):
         """Export the blockchain into CSV files."""
