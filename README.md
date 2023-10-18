@@ -240,19 +240,19 @@ Note: this will also delete your initial password. Set it again as needed.
 Switch back into the dump directory and create a new database using Neo4J's CSV importer tool:
 
 ```bash
-neo4j-admin database import full --overwrite-destination 
-  --nodes=:Block=blocks_header.csv,blocks.csv 
-  --nodes=:Transaction=transactions_header.csv,transactions.csv 
-  --nodes=:Output=outputs_header.csv,outputs.csv
-  --nodes=:Address=addresses_header.csv,addresses.csv 
-  --relationships=CONTAINS=rel_block_tx_header.csv,rel_block_tx.csv 
-  --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv 
-  --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv 
-  --relationships=INPUT=rel_input_header.csv,rel_input.csv 
-  --relationships=USES=rel_output_address_header.csv,rel_output_address.csv 
-  --nodes=:Entity=entity_header.csv,entity.csv 
-  --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address_merged.csv  
-  --relationships=GENERATES=rel_address_address_header.csv,rel_address_address.csv 
+neo4j-admin database import full --overwrite-destination \
+  --nodes=:Block=blocks_header.csv,blocks.csv \
+  --nodes=:Transaction=transactions_header.csv,transactions.csv \
+  --nodes=:Output=outputs_header.csv,outputs.csv \
+  --nodes=:Address=addresses_header.csv,addresses.csv \
+  --relationships=CONTAINS=rel_block_tx_header.csv,rel_block_tx.csv \
+  --relationships=APPENDS=rel_block_block_header.csv,rel_block_block.csv \
+  --relationships=OUTPUT=rel_tx_output_header.csv,rel_tx_output.csv \
+  --relationships=INPUT=rel_input_header.csv,rel_input.csv \
+  --relationships=USES=rel_output_address_header.csv,rel_output_address.csv \
+  --nodes=:Entity=entity_header.csv,entity.csv \
+  --relationships=OWNER_OF=rel_entity_address_header.csv,rel_entity_address_merged.csv  \
+  --relationships=GENERATES=rel_address_address_header.csv,rel_address_address.csv \
   <database name>
 ```
 If you did the import as any user other than neo4j, `chown -R neo4j:neo4j /path/to/neo4j/data`. 
