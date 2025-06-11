@@ -19,16 +19,15 @@ class BitcoinProxyMock(BitcoinProxy):
 
     # Load test data into local dicts
     def load_testdata(self):
-        p = Path(TEST_DATA_PATH)
+        p = Path(__file__).parent.joinpath('data')
         files = [x for x in p.iterdir()
                  if x.is_file() and x.name.endswith('json')]
         for f in files:
             if f.name.startswith("block"):
-                height = f.name[6:-5]
                 with f.open() as jf:
                     raw_block = json.load(jf)
                     block_hash = raw_block['hash']
-                    self.heights[int(height)] = block_hash
+                    self.heights[raw_block['height']] = block_hash
                     self.blocks[block_hash] = raw_block
             elif f.name.startswith("tx"):
                 tx_hash = f.name[3:-5]

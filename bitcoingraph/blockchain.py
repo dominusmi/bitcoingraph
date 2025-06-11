@@ -4,7 +4,12 @@ blockchain
 An API for traversing the Bitcoin blockchain
 
 """
+import json
+import os
+import time
+from typing import Iterator
 
+from bitcoingraph.logger import get_logger
 from bitcoingraph.model import Block, Transaction
 from bitcoingraph.bitcoind import BitcoindException
 
@@ -12,7 +17,7 @@ __author__ = 'Bernhard Haslhofer (bernhard.haslhofer@ait.ac.at)'
 __copyright__ = 'Copyright 2015, Bernhard Haslhofer'
 __license__ = "MIT"
 
-
+logger = get_logger("blockchain")
 class BlockchainException(Exception):
     """
     Exception raised when accessing or navigating the block chain.
@@ -53,8 +58,20 @@ class Blockchain:
         """
         # Returns block by hash
         try:
+            logger.info(f"Getting block: {block_hash}")
+            start = time.time()
             raw_block_data = self._bitcoin_proxy.getblock(block_hash)
-            return Block(self, json_data=raw_block_data)
+            interval = time.time()-start
+            logger.info(f"Took {interval} seconds to get block")
+
+            if os.environ.get("BC_CACHE") == "1":
+                logger.info("Saving block in local cache")
+                with open(f"block-{block_hash}.json", "w+") as f:
+                    f.write(json.dumps(raw_block_data))
+
+            logger.info("Parsing block")
+            block = Block.model_validate(raw_block_data)
+            return block
         except BitcoindException as exc:
             raise BlockchainException('Cannot retrieve block {}'.format(block_hash), exc)
 
@@ -75,7 +92,7 @@ class Blockchain:
             raise BlockchainException(
                 'Cannot retrieve block with height {}'.format(block_height), exc)
 
-    def get_blocks_in_range(self, start_height=0, end_height=0):
+    def get_blocks_in_range(self, start_height=0, end_height=0) -> Iterator[Block]:
         """
         Generates blocks in a given range.
 
@@ -88,7 +105,7 @@ class Blockchain:
         while block.height <= end_height:
             yield block
             if block.has_next_block():
-                block = block.next_block
+                block = self.get_block_by_hash(block.next_block_hash)
             else:
                 break
 
@@ -104,24 +121,8 @@ class Blockchain:
             raw_tx_data = self._bitcoin_proxy.getrawtransaction(tx_id)
             return Transaction(self, json_data=raw_tx_data)
         except BitcoindException as exc:
+            print(exc)
             raise BlockchainException('Cannot retrieve transaction with id {}'.format(tx_id), exc)
-
-    def get_transactions(self, tx_ids):
-        """
-        Returns transactions for given transaction ids.
-
-        :param tx_ids: list of transaction ids
-        :return: list of transaction objects
-        :rtype: Transaction list
-        """
-        try:
-            txs = []
-            raw_txs_data = self._bitcoin_proxy.getrawtransactions(tx_ids)
-            for raw_tx_data in raw_txs_data:
-                txs.append(Transaction(raw_tx_data, self))
-            return txs
-        except BitcoindException as exc:
-            raise BlockchainException('Cannot retrieve transactions {}'.format(tx_ids), exc)
 
     def get_max_block_height(self):
         """

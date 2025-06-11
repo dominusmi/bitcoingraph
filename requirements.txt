@@ -1,3 +1,6 @@
-requests>=2.5.0
-beautifulsoup4
-pytest
+bitcoinlib~=0.6.10
+cryptography~=41.0.1
+neo4j~=5.9.0
+pydantic~=2.3.0
+requests~=2.31.0
+tqdm~=4.65.0

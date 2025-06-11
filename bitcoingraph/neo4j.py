@@ -1,6 +1,3 @@
-
-import json
-import requests
 from datetime import date, datetime, timezone
 
 
@@ -19,19 +16,9 @@ class Neo4jException(Exception):
 
 class Neo4jController:
 
-    def __init__(self, host, port, user, password):
-        self.host = host
-        self.port = port
-        self.user = user
-        self.password = password
-        self.url_base = 'http://{}:{}/db/data/'.format(host, port)
-        self.url = self.url_base + 'transaction/commit'
-        self.headers = {
-            'Accept': 'application/json; charset=UTF-8',
-            'Content-Type': 'application/json',
-            'max-execution-time': 30000
-        }
-        self._session = requests.Session()
+    def __init__(self, driver: 'neo4j.Driver'):
+        self.driver = driver
+
 
     address_match = lb_join(
         'MATCH (a:Address {address: {address}})<-[:USES]-(o),',
@@ -125,20 +112,20 @@ class Neo4jController:
     def entity_query(self, address):
         s = lb_join(
             'MATCH (a:Address {address: {address}})-[:BELONGS_TO]->(e)',
-            'RETURN {id: id(e)}')
+            'RETURN {id: elementId(e)}')
         return self.query(s, {'address': address})
 
     def get_number_of_addresses_for_entity(self, id):
         s = lb_join(
             'MATCH (e:Entity)',
-            'WHERE id(e) = {id}',
+            'WHERE elementId(e) = $id',
             'RETURN size((e)<-[:BELONGS_TO]-())')
         return self.query(s, {'id': id}).single_result()
 
     def entity_address_query(self, id, limit):
         s = lb_join(
             'MATCH (e:Entity)<-[:BELONGS_TO]-(a)',
-            'WHERE id(e) = {id}',
+            'WHERE elementId(e) = $id',
             'OPTIONAL MATCH (a)-[:HAS]->(i)',
             'WITH e, a, collect(i) as is',
             'ORDER BY length(is) desc',
@@ -149,7 +136,7 @@ class Neo4jController:
     def identity_query(self, address):
         s = lb_join(
             'MATCH (a:Address {address: {address}})-[:HAS]->(i)',
-            'RETURN collect({id: id(i), name: i.name, link: i.link, source: i.source})')
+            'RETURN collect({id: elementId(i), name: i.name, link: i.link, source: i.source})')
         return self.query(s, {'address': address})
 
     def reverse_identity_query(self, name):
@@ -167,14 +154,14 @@ class Neo4jController:
     def identity_delete_query(self, id):
         s = lb_join(
             'MATCH (i:Identity)',
-            'WHERE id(i) = {id}',
+            'WHERE elementId(i) = $id',
             'DETACH DELETE i')
         return self.query(s, {'id': id})
 
     def path_query_old(self, address1, address2):
         s = lb_join(
-            'MATCH (start:Address {address: {address1}})<-[:USES]-(o1:Output)',
-            '  -[:INPUT|OUTPUT*]->(o2:Output)-[:USES]->(end:Address {address: {address2}}),',
+            'MATCH (start:Address {address: $address1})<-[:USES]-(o1:Output)',
+            '  -[:INPUT|OUTPUT*]->(o2:Output)-[:USES]->(end:Address {address: $address2}),',
             '  p = shortestpath((o1)-[:INPUT|OUTPUT*]->(o2))',
             'WITH p',
             'LIMIT 1',
@@ -183,101 +170,86 @@ class Neo4jController:
             'RETURN n as node, a as address')
         return self.query(s, {'address1': address1, 'address2': address2})
 
-    def path_query(self, address1, address2):
-        source = self.get_id_of_address_node(address1)
-        if source is None:
-            raise Neo4jException("address {} doesn't exist".format(address1))
-        target = self.get_id_of_address_node(address2)
-        if target is None:
-            raise Neo4jException("address {} doesn't exist".format(address2))
-        url = self.url_base + 'ext/Entity/node/{}/findPathWithBidirectionalStrategy'.format(source)
-        payload = {'target': self.url_base + 'node/{}'.format(target)}
-        r = self._session.post(url, auth=(self.user, self.password), json=payload,
-                               headers=self.headers)
-        result_obj = r.json()
-        result = json.loads(result_obj) if type(result_obj) is str else result_obj
-        if 'errors' in result:
-            raise Neo4jException(result['errors'][0]['message'])
-        elif 'path' in result:
-            return result['path']
-        else:
-            return None
-
     def get_id_of_address_node(self, address):
         s = lb_join(
-            'MATCH (a:Address {address: {address}})',
-            'RETURN id(a)')
+            'MATCH (a:Address {address: $address})',
+            'RETURN elementId(a)')
         return self.query(s, {'address': address}).single_result()
 
     def get_max_block_height(self):
         s = lb_join(
             'MATCH (b:Block)',
-            'RETURN max(b.height)')
-        return self.query(s).single_result()
+            'RETURN max(b.height) as maxHeight')
+        return self.query(s).single_result()["maxHeight"]
 
     def add_block(self, block):
         s = lb_join(
-            'CREATE (b:Block {hash: {hash}, height: {height}, timestamp: {timestamp}})',
-            'RETURN id(b)')
+            'CREATE (b:Block {hash: $hash, height: $height, timestamp: $timestamp})',
+            'WITH b',
+            'OPTIONAL MATCH (bprev:Block {height: $height-1})',
+            'CALL { WITH b,bprev',
+            'WITH b, bprev WHERE bprev is not null',
+            'CREATE (b)-[:APPENDS]->(bprev)',
+            '}'
+            'RETURN elementId(b) as id')
         p = {'hash': block.hash, 'height': block.height, 'timestamp': block.timestamp}
         return self.query(s, p).single_result()
 
     def add_transaction(self, block_node_id, tx):
         s = lb_join(
-            'MATCH (b) WHERE id(b) = {id}',
-            'CREATE (b)-[:CONTAINS]->(t:Transaction {txid: {txid}, coinbase: {coinbase}})',
-            'RETURN id(t)')
-        p = {'id': block_node_id, 'txid': tx.txid, 'coinbase': tx.is_coinbase()}
+            'MATCH (b) WHERE elementId(b) = $id',
+            'CREATE (b)-[:CONTAINS]->(t:Transaction {txid: $txid, coinbase: $coinbase})',
+            'RETURN elementId(t) as id')
+        p = {'id': block_node_id['id'], 'txid': tx.txid, 'coinbase': tx.is_coinbase()}
         return self.query(s, p).single_result()
 
     def add_input(self, tx_node_id, output_reference):
         s = lb_join(
-            'MATCH (o:Output {txid_n: {txid_n}}), (t)',
-            'WHERE id(t) = {id}',
+            'MATCH (o:Output {txid_n: $txid_n}), (t)',
+            'WHERE elementId(t) = $id',
             'CREATE (o)-[:INPUT]->(t)')
         p = {'txid_n': '{}_{}'.format(output_reference['txid'], output_reference['vout']),
-             'id': tx_node_id}
+             'id': tx_node_id['id']}
         return self.query(s, p).single_result()
 
     def add_output(self, tx_node_id, output):
         s = lb_join(
-            'MATCH (t) WHERE id(t) = {id}',
+            'MATCH (t) WHERE elementId(t) = $id',
             'CREATE (t)-[:OUTPUT]->'
-            '(o:Output {txid_n: {txid_n}, n: {n}, value: {value}, type: {type}})',
-            'RETURN id(o)')
-        p = {'id': tx_node_id, 'txid_n': '{}_{}'.format(output.transaction.txid, output.index),
+            '(o:Output {txid_n: $txid_n, n: $n, value: $value, type: $type})',
+            'RETURN elementId(o) as id')
+        p = {'id': tx_node_id['id'], 'txid_n': '{}_{}'.format(output.transaction.txid, output.index),
              'n': output.index, 'value': output.value, 'type': output.type}
         return self.query(s, p).single_result()
 
     def add_address(self, output_node_id, address):
         s = lb_join(
-            'MATCH (o) WHERE id(o) = {id}',
-            'MERGE (a:Address {address: {address}})',
+            'MATCH (o) WHERE elementId(o) = $id',
+            'MERGE (a:Address {address: $address})',
             'CREATE (o)-[:USES]->(a)',
-            'RETURN id(a)')
-        return self.query(s, {'id': output_node_id, 'address': address}).single_result()
+            'RETURN elementId(a) as id')
+        return self.query(s, {'id': output_node_id['id'], 'address': address}).single_result()
 
-    def create_entity(self, transaction_node_id):
-        url = self.url_base + 'ext/Entity/node/{}/createEntity'.format(transaction_node_id)
-        self._session.post(url, auth=(self.user, self.password))
-
-    def create_entities(self, block_node_id):
-        url = self.url_base + 'ext/Entity/node/{}/createEntities'.format(block_node_id)
-        self._session.post(url, auth=(self.user, self.password))
+    def add_addresses(self, output_node_id, addresses):
+        s = lb_join(
+            'MATCH (o) WHERE elementId(o) = $id',
+            'WITH o',
+            'UNWIND $addresses AS address',
+            'MERGE (a:Address {address: address})',
+            'CREATE (o)-[:USES]->(a)',
+            'RETURN elementId(a)')
+        return self.query(s, {'id': output_node_id['id'], 'addresses': addresses}).single_result()
 
     def query(self, statement, parameters=None):
-        #print(statement, '||', parameters)
-        statement_json = {'statement': statement}
-        if parameters is not None:
-            statement_json['parameters'] = parameters
-        payload = {'statements': [statement_json]}
-        r = self._session.post(self.url, auth=(self.user, self.password),
-                               headers=self.headers, json=payload)
-        result = r.json()
-        if result['errors']:
-            raise Neo4jException(result['errors'][0]['message'])
-        #print(result)
-        return QueryResult(result)
+        if parameters is None:
+            parameters = {}
+        try:
+            with self.driver.session() as session:
+                r = session.run(statement, **parameters)
+                return QueryResult(r.data())
+
+        except Exception as e:
+            raise Neo4jException(str(e))
 
     @staticmethod
     def as_address_query_parameter(address, date_from=None, date_to=None):
@@ -294,24 +266,35 @@ class Neo4jController:
             timestamp_to = d.timestamp()
         return {'address': address, 'from': timestamp_from, 'to': timestamp_to}
 
-    def transaction(self):
-        return DBTransaction(self.host, self.port, self.user, self.password)
+    def transaction(self) -> 'DBTransaction':
+        return DBTransaction(self.driver)
 
 
 class DBTransaction(Neo4jController):
 
     def __enter__(self):
-        transaction_begin_url = self.url_base + 'transaction'
-        r = self._session.post(transaction_begin_url, auth=(self.user, self.password),
-                               headers=self.headers)
-        self.url = r.headers['Location']
+        self.session = self.driver.session()
+        tx = self.session.begin_transaction()
+        self.tx = tx
         return self
 
-    def __exit__(self, type, value, traceback):
-        transaction_commit_url = self.url + '/commit'
-        r = self._session.post(transaction_commit_url, auth=(self.user, self.password),
-                               headers=self.headers)
-        self._session.close()
+    def __exit__(self, exception_type, value, traceback):
+        if exception_type is None:
+            self.tx.commit()
+        else:
+            self.tx.rollback()
+        self.tx.close()
+        self.session.close()
+
+    def query(self, statement, parameters=None):
+        if parameters is None:
+            parameters = {}
+        try:
+            r = self.tx.run(statement, **parameters)
+            return QueryResult(r.data())
+
+        except Exception as e:
+            raise Neo4jException(str(e))
 
 
 class QueryResult:
@@ -319,11 +302,9 @@ class QueryResult:
     def __init__(self, raw_data):
         self._raw_data = raw_data
 
+    @property
     def data(self):
-        if self._raw_data['results']:
-            return self._raw_data['results'][0]['data']
-        else:
-            return []
+        return self._raw_data
 
     def columns(self):
         return self._raw_data['results'][0]['columns']
@@ -335,8 +316,8 @@ class QueryResult:
         return [r['row'][0] for r in self.data()]
 
     def single_result(self):
-        if self.data():
-            return self.data()[0]['row'][0]
+        if self.data:
+            return self.data[0]
         else:
             return None
 

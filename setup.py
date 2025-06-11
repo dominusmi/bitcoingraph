@@ -1,4 +1,8 @@
 from __future__ import print_function
+
+import os
+import platform
+
 from setuptools import setup
 from setuptools.command.test import test as TestCommand
 import io
@@ -19,11 +23,21 @@ def read(*filenames, **kwargs):
 
 long_description = read('README.rst')
 
+_compatible_install = [
+    'neo4j>=4',
+    'requests>=2.5.0',
+    'tqdm~=4.65.0'
+]
+
+if platform.python_implementation() == "PyPy":
+    print("Skipping install neo4j because of PyPy error")
+    _compatible_install.pop(0)
+
 
 class PyTest(TestCommand):
     def finalize_options(self):
         TestCommand.finalize_options(self)
-        self.test_args = []
+        self.test_args = ['./tests/']
         self.test_suite = True
 
     def run_tests(self):
@@ -31,6 +45,9 @@ class PyTest(TestCommand):
         errcode = pytest.main(self.test_args)
         sys.exit(errcode)
 
+
+with open('requirements.txt') as f:
+    requirements = f.read().splitlines()
 
 setup(
     # Basic info
@@ -53,16 +70,15 @@ setup(
              'scripts/bcgraph-compute-entities',
              'scripts/bcgraph-synchronize'],
     platforms='any',
-    install_requires=['requests>=2.5.0'],
-
+    install_requires=requirements,
     classifiers=[
-         'Development Status :: 4 - Beta',
-         'Environment :: Console',
-         'Intended Audience :: Developers',
-         'License :: OSI Approved :: MIT License',
-         'Operating System :: OS Independent',
-         'Programming Language :: Python :: 3',
-         'Topic :: Software Development :: Libraries',
+        'Development Status :: 4 - Beta',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 3',
+        'Topic :: Software Development :: Libraries',
     ],
 
     # Testing
@@ -71,6 +87,8 @@ setup(
     cmdclass={'test': PyTest},
     extras_require={
         'testing': ['pytest'],
+        'ssh': ['paramiko'],
+        'profile': ['line-profiler==4.0.3']
     },
 
     # Legal info

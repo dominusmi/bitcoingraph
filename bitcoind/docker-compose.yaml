@@ -1,0 +1,13 @@
+version: '3'
+services:
+  bitcoind:
+    image: kylemanna/bitcoind
+    volumes:
+      - ./data-200k:/bitcoin/.bitcoin
+#    command: ["bitcoind", "-stopatheight=80000", "-printtoconsole"]
+    command: [
+        "bitcoind", "-printtoconsole", "-rpcallowip=0.0.0.0/0",
+        "-rpcbind=0.0.0.0","-listen","-rpcuser=local","-rpcpassword=local",
+        "-connect=0", "-rest", "-txindex"]
+    ports:
+      - 8332:8332

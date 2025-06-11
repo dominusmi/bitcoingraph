@@ -1,10 +1,23 @@
 import bisect
+import copy
 import csv
 import os
+import pickle
+import queue
+import random
+import uuid
+from pathlib import Path
+from time import sleep
+from typing import Dict, List, Set, Optional, Iterable, Sized
 
+import neo4j
+import tqdm
+
+from bitcoingraph.logger import get_logger
+
+logger = get_logger("entities")
 
 class Address:
-
     counter = 0
 
     def __init__(self, address, assign_number=False):
@@ -149,3 +162,270 @@ def calculate_input_addresses(input_path):
 
             if match_address is not None:
                 input_address_writer.writerow([txid, match_address])
+
+
+def get_addresses_grouped_by_transaction(session: 'neo4j.Session', start_height: int, max_height: int):
+    query = """
+        MATCH (b:Block)
+        WHERE b.height >= $lower AND b.height <= $higher
+        WITH b
+        MATCH (b)-[:CONTAINS]->(t)<-[:INPUT]-(o)-[:USES]->(a)
+        WITH t, collect(distinct a.address) as addresses
+        OPTIONAL MATCH (a)-[:GENERATES]->(b:Address)
+        WHERE a.address in addresses AND not b.address in addresses
+        WITH t, addresses, collect(distinct b.address) as generatedOut
+        OPTIONAL MATCH (a)<-[:GENERATES]-(b:Address)
+        WHERE a.address in addresses AND not b.address in addresses
+        WITH t, addresses, generatedOut, collect(distinct b.address) as generatedIn
+        WITH t, addresses, generatedOut + generatedIn as generated
+        RETURN t.txid, addresses, generated
+    """
+    result = session.run(query, stream=True, lower=start_height, higher=max_height)
+    return result.data()
+
+
+def _fetch_outputs_thread(session: 'neo4j.Session', batch_size: int, skip: int,
+                          result_queue: queue.Queue, stop_queue: queue.Queue):
+
+    try:
+        query = """
+            MATCH (t:Transaction)<-[:INPUT]-(:Output)-[:USES]->(a:Address)
+            WITH t,a
+            SKIP $skip
+            CALL {
+                WITH t,a
+                RETURN elementId(t) as elmId, collect(distinct elementId(a)) as addresses
+            } IN TRANSACTIONS
+            RETURN addresses
+            """
+        cursor = session.run(query, stream=True, skip=skip)
+
+        while True:
+            result = cursor.fetch(batch_size)
+            if not result:
+                break
+            if not stop_queue.empty():
+                raise Exception("Received stop signal")
+            result_queue.put([{"addresses": g.get("addresses")} for g in result])
+
+        result_queue.put(None)
+
+    except Exception as e:
+        print(f"Thread failed: {e}")
+        result_queue.put(-1)
+    finally:
+        print("exiting")
+        result_queue.put(None)
+        session.close()
+
+
+class EntityGrouping:
+    def __init__(self):
+        self.entity_idx_counter = 0
+        self.entity_idx_to_addresses: Dict[int, Set[str]] = {}
+        self.address_to_entity_idx: Dict[str, int] = {}
+        self.entity_idx_counter = 0
+        self.counter_entities = 0
+        self.counter_joined_entities = 0
+        self.last_updated: Dict[int, int] = dict([])
+        self.last_empty = 0
+
+    # @profile
+    def update_from_address_group(self, addresses: List[str]):
+        if len(addresses) <= 1:
+            return
+
+        found_entities_idx: Set[int] = set([])
+
+        for addr in addresses:
+            entity_idx = self.address_to_entity_idx.get(addr, None)
+            if entity_idx is not None:
+                found_entities_idx.add(entity_idx)
+
+        if found_entities_idx:
+            # Here we need to join all the addresses from the different entities together
+            min_entity_idx: int = min(found_entities_idx)
+            entity_address_set = self.entity_idx_to_addresses[min_entity_idx]
+            moved_addresses = set(addresses)
+            for entity_idx in found_entities_idx:
+                if entity_idx == min_entity_idx:
+                    continue
+
+                entity_addresses_to_merge = self.entity_idx_to_addresses.pop(entity_idx)
+
+                moved_addresses.update(entity_addresses_to_merge)
+                entity_address_set.update(entity_addresses_to_merge)
+
+            for addr in moved_addresses:
+                self.address_to_entity_idx[addr] = min_entity_idx
+
+            self.entity_idx_to_addresses[min_entity_idx].update(moved_addresses)
+            self.counter_entities -= (len(found_entities_idx) - 1)
+            self.counter_joined_entities += len(found_entities_idx) - 1
+
+        else:
+            # create a new entity
+            entity_idx = self.entity_idx_counter
+            for addr in addresses:
+                self.address_to_entity_idx[addr] = entity_idx
+            self.entity_idx_to_addresses[entity_idx] = set(addresses)
+
+            self.entity_idx_counter += 1
+            self.counter_entities += 1
+
+    def save_entities(self, session: 'neo4j.Session'):
+        iterator = self.entity_idx_to_addresses.items()
+        for entity_idx, addresses in tqdm.tqdm(iterator, desc="Adding entities"):
+            if len(addresses) <= 1:
+                continue
+            addresses = list(addresses)
+
+            result = session.run("""
+            UNWIND $addresses as address
+            MATCH (a:Address {address: address}) 
+            WITH a
+            OPTIONAL MATCH (a)<-[:OWNER_OF]-(e:Entity)
+            OPTIONAL MATCH (e)-[rel:OWNER_OF]->()
+            return e.entity_id as eid, e.name as name, count(rel) as count_rel
+            """, addresses=addresses).data()
+
+            entities = [x['eid'] for x in result if x['eid'] is not None]
+            entity_names = [x['name'] for x in result if x['name'] is not None]
+            count_relationships = [x['count_rel'] for x in result if x['count_rel'] > 0]
+            entity_name = "+".join(entity_names) if entity_names else None
+
+            if len(entities) == 0:
+                addresses.sort()
+                session.run("""
+                CREATE (e:Entity {entity_id: $entity_id})
+                WITH e
+                UNWIND $addresses as address
+                MATCH (a:Address {address: address})
+                MERGE (a)<-[:OWNER_OF]-(e)
+                """, entity_id=addresses[0], addresses=addresses)
+            elif len(entities) == 1:
+                query = """
+                UNWIND $addresses AS address
+                MATCH (a:Address {address: address})
+                WITH a
+                MATCH (e:Entity {entity_id: $entity_id})
+                MERGE (e)-[:OWNER_OF]->(a)
+                """
+                session.run(query, entity_id=entities[0], addresses=addresses)
+            else:
+                # sort entities by number of relationships
+                entities = [x for _, x in sorted(zip(count_relationships, entities), reverse=True)]
+                set_entity_name = f"SET e.name = $entity_name" if entity_name else ''
+                query = """
+                    UNWIND $small_entities as sme_id
+                    MATCH (e:Entity {entity_id: sme_id})-[:OWNER_OF]->(a)
+                    CALL {
+                        WITH e
+                        DETACH DELETE e
+                    }
+                    WITH a
+                    UNWIND $addresses as address
+                    MATCH (all_a: Address {address: address})
+                    WITH distinct collect(a)+collect(all_a) as all_addresses
+                    UNWIND all_addresses as a
+                    MATCH (e:Entity {entity_id: $large_entity})
+                    CREATE (a)<-[:OWNER_OF]-(e)
+                    %s
+                    """ % set_entity_name
+
+                session.run(query, small_entities=entities[1:], large_entity=entities[0], entity_name=entity_name, addresses=addresses)
+
+
+def add_entities(batch_size: int, resume: str, driver: 'neo4j.Driver'):
+    session = driver.session()
+    result_queue = queue.Queue()
+    stop_queue = queue.Queue()
+
+    if resume is not None:
+        path = Path(resume).resolve()
+        with open(path, "rb+") as f:
+            data = pickle.load(f)
+            current_transaction = data["iteration"]
+            entity_grouping = data["grouping"]
+            print(f"Resuming from {path} at transaction {current_transaction}")
+    else:
+        entity_grouping = EntityGrouping()
+        current_transaction = 0
+
+    # 2.69 is the average number of inputs per transactions. The real query would actually be
+    # RETURN count(distinct t), however this takes a lot of time, hence the use of estimate
+    count_transactions = session.run("MATCH (t:Transaction)<-[:INPUT]-() RETURN count(t) as ct").data()[0]["ct"] / 2.69
+    count_transactions = int(round(count_transactions))
+
+    # This is the thread that continuously queries for the next batch_size transactions
+    # thread = threading.Thread(target=_fetch_outputs_thread,
+    #                           args=(session, batch_size, current_transaction, result_queue, stop_queue,))
+    # thread.start()
+
+    dump_path = f"./state_dump_{uuid.uuid4()}.pickle"
+    print(f"Dump file: {dump_path}")
+    try:
+        loop_counter = 0
+        progress_bar = tqdm.tqdm(desc="Transactions read", total=count_transactions-current_transaction)
+
+        query = """
+                MATCH (t:Transaction)<-[:INPUT]-(:Output)-[:USES]->(a:Address)
+                WITH t,a
+                SKIP $skip
+                CALL {
+                    WITH t,a
+                    RETURN elementId(t) as elmId, collect(distinct a.address) as addresses
+                } IN TRANSACTIONS
+                RETURN addresses
+                    """
+        cursor = session.run(query, stream=True, skip=current_transaction)
+
+        while True:
+            result = cursor.fetch(batch_size)
+            if not result:
+                break
+
+            result_list = [{"addresses": g.get("addresses")} for g in result]
+            for result in result_list:
+                addresses = result["addresses"]
+                entity_grouping.update_from_address_group(addresses)
+
+            batch_transaction = len(result_list)
+            current_transaction += batch_transaction
+            progress_bar.update(batch_transaction)
+
+            loop_counter += 1
+            progress_bar.set_postfix({'Total entities': len(entity_grouping.entity_idx_to_addresses),
+                                      'Counter joined': entity_grouping.counter_joined_entities})
+
+            if loop_counter % int(round(50000 / batch_size)) == 0:
+                with open(dump_path, "wb+") as f:
+                    print("Dumping current state")
+                    pickle.dump({"iteration": current_transaction, "grouping": entity_grouping}, f)
+
+    except KeyboardInterrupt:
+        # stop_queue.put("Time to stop")
+        # for i in range(10):
+        #     if thread.is_alive():
+        #         sleep(2)
+        pass
+
+    with driver.session() as session:
+        sleep(1)
+        entity_grouping.save_entities(session)
+
+
+def upsert_entities(session: neo4j.Session, addresses_per_transaction: List[Set[str]], pk_to_addresses: Dict[str, List[str]]):
+    entity_grouping = EntityGrouping()
+
+    logger.info("- Computing")
+    for k, v in pk_to_addresses.items():
+        addresses = set(v)
+        addresses.add(k)
+        entity_grouping.update_from_address_group(list(addresses))
+
+    for addresses in addresses_per_transaction:
+        entity_grouping.update_from_address_group(list(addresses))
+
+    logger.info("- Preparing queries")
+    entity_grouping.save_entities(session)

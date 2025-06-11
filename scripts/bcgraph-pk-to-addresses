@@ -1,0 +1,193 @@
+#!/usr/bin/env python
+
+import argparse
+import datetime
+import pathlib
+import sys
+import os
+import shutil
+from bitcoinlib.keys import Key
+
+parser = argparse.ArgumentParser(
+    description='Compute entities from exported block chain data')
+parser.add_argument('-i', '--input_path', required=True,
+                    help='Input path')
+parser.add_argument('-b', '--batch_size', required=False, default=1000, type=int,
+                    help='Write batch size')
+parser.add_argument('-r', '--read-size', required=False, default=4294967296, type=int,
+                    help='Read batch size. Defaults to 4GB')
+
+
+def get_p2pkh(k: Key):
+    return k.address()
+
+
+def get_p2wpkh(k: Key):
+    return k.address(compressed=True, encoding="bech32")
+
+
+def progress(p: float):
+    p = int(p * 100)
+    sys.stdout.write('\rProgress: {}%'.format(p))
+    sys.stdout.flush()
+
+
+def line_reader(file, chunk_size):
+    remainder = ""  # Store the remaining data from the previous chunk
+    while True:
+        start = datetime.datetime.now()
+        print(f"Reading batch of {chunk_size} bytes")
+        chunk = file.read(chunk_size)
+        if not chunk:
+            print(f"EOF")
+            break
+        end = datetime.datetime.now()
+        print(f"Batch read in {(end-start).seconds} seconds")
+        data = remainder + chunk
+        lines = data.split("\n")
+        # Process all complete lines except the last one
+        for line in lines[:-1]:
+            yield line.strip()
+        remainder = lines[-1]
+
+    if remainder:
+        yield remainder
+
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    batch_size = args.batch_size
+    path = pathlib.Path(args.input_path)
+
+    with open(path.joinpath("rel_address_address_header.csv"), "w+") as f:
+        f.write("pk:START_ID(Address),address:END_ID(Address)\n")
+
+    print("Starting..")
+    chunk_size = args.read_size
+    started_processing_pk = False
+
+    path_rel_address_address = path.joinpath("rel_address_address.csv")
+    path_rel_entity_address = path.joinpath("rel_entity_address.csv.tmpcopy")
+    path_rel_entity_address_original = path.joinpath("rel_entity_address.csv")
+
+    with open(path.joinpath("pk2addresses.csv"), "w+") as _:
+        pass
+    with open(path.joinpath("new_addresses.csv"), "w+") as _:
+        pass
+    with open(path_rel_address_address, "w+") as _:
+        pass
+
+    with open(path_rel_entity_address_original) as f:
+        f.seek(0,os.SEEK_END)
+        f.seek(f.tell()-500)
+        lines = f.readlines()
+        current_entity_id = int(lines[-1].split(",")[0]) + 1
+
+    print("Create copy of rel_entity_address.csv")
+    shutil.copy(path_rel_entity_address_original, path_rel_entity_address)
+
+
+    with open(path.joinpath("addresses.csv"), "r") as fa:
+        # instead of writing every relationship one at a time, we write them in batches
+        batch_write_rel_address_address = []
+        batch_write_rel_entity_address = []
+        for line_number, line in enumerate(line_reader(fa, chunk_size)):
+            if line.startswith("pk_"):
+                if line.endswith("CHECKSIG"):
+                    pk = line[3:-12]
+                else:
+                    pk = line[3:]
+
+                if not started_processing_pk:
+                    started_processing_pk = True
+                    print("Started processing public keys")
+
+                try:
+                    key = Key(pk)
+                except Exception as e:
+                    print(f"Failed to parse key, skipping\n{pk}\n{e}")
+                    continue
+
+                p2pkh = get_p2pkh(key)
+                p2wpkh = get_p2wpkh(key)
+                batch_write_rel_address_address.extend([
+                    f"{line},{p2pkh}", f"{line},{p2wpkh}"
+                ])
+                batch_write_rel_entity_address.extend([
+                    f"{current_entity_id},{line}",
+                    f"{current_entity_id},{p2pkh}",
+                    f"{current_entity_id},{p2wpkh}"
+                ])
+                current_entity_id += 1
+
+            if line_number and batch_write_rel_address_address and line_number % batch_size == 0:
+                date = datetime.datetime.utcnow()
+                print(f'{date.strftime("%Y-%m-%d %H:%M:%S")} Processed {line_number} addresses')
+
+                with open(path_rel_address_address, "a") as output:
+                    output.write("\n".join(batch_write_rel_address_address) + "\n")
+
+                with open(path_rel_entity_address, "a") as output:
+                    output.write("\n".join(batch_write_rel_entity_address) + "\n")
+                batch_write_rel_address_address = []
+                batch_write_rel_entity_address = []
+
+        if batch_write_rel_address_address:
+            with open(path_rel_address_address, "a") as output:
+                output.write("\n".join(batch_write_rel_address_address) + "\n")
+    fa.close()
+
+    pkh_addresses = []
+    pk_lines = 0
+    print("Reading pk2pkh addresses")
+    with open(path_rel_address_address, "r") as fr:
+        for line_number, line in enumerate(line_reader(fr, chunk_size)):
+            address = line.rsplit(",", 1)[-1]
+            pkh_addresses.append(address)
+            pk_lines += 1
+    fr.close()
+
+    print("Finding duplicate addresses")
+    pkh_addresses.sort()
+    to_remove = []
+    with open(path.joinpath("addresses.csv")) as f:
+        read_address = f.readline().strip()
+        file_has_content = True
+        for i,address in enumerate(pkh_addresses):
+            while file_has_content:
+                if read_address == address:
+                    to_remove.append(i)
+                    break
+                elif read_address > address:
+                    break
+
+                read_address = f.readline().strip()
+                if len(read_address) == 0:
+                    file_has_content = False
+
+    print(f"Found {len(to_remove)} addresses to remove")
+    for i in reversed(to_remove):
+        pkh_addresses.pop(i)
+
+
+    print("Writing pk2pkh addresses")
+    with open(path.joinpath("pk2addresses.csv"), "w") as pka:
+        pka.writelines((addr+"\n" for addr in pkh_addresses))
+    pka.close()
+
+
+
+    print("Appending pk2pkh addresses to addresses")
+    addrfiles = [path.joinpath("addresses.csv"), path.joinpath("pk2addresses.csv")]
+    with open(path.joinpath("new_addresses.csv"), "wb") as ba:
+        for af in addrfiles:
+            with open(af,'rb') as fd:
+                shutil.copyfileobj(fd, ba)
+
+    print("Keep original addresses.csv in case of error as addresses.csv.original")
+    shutil.move(path.joinpath("addresses.csv"), path.joinpath("addresses.csv.original"))
+    shutil.move(path.joinpath("new_addresses.csv"), path.joinpath("addresses.csv"))
+
+    print("Keep original rel_entity_address.csv in case of error as rel_entity_address.csv.original")
+    shutil.move(path_rel_entity_address_original, path.joinpath("rel_entity_address.csv.original"))
+    shutil.move(path_rel_entity_address, path_rel_entity_address_original)

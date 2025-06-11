@@ -1,16 +1,562 @@
 #!/usr/bin/env python
-
 import argparse
-from bitcoingraph import bitcoingraph
+import bisect
+import datetime
+import io
+import os
+import pickle
+import subprocess
+import time
+import typing
+from collections import OrderedDict
+from pathlib import Path
+from typing import List, Optional
+
+from tqdm import tqdm
+
+from bitcoingraph import entities
+from bitcoingraph.entities import EntityGrouping
+from bitcoingraph.helper import sort
 
 parser = argparse.ArgumentParser(
     description='Compute entities from exported block chain data')
 parser.add_argument('-i', '--input_path', required=True,
                     help='Input path')
-parser.add_argument('--sort-input', action='store_true',
+parser.add_argument('--sort-output', action='store_true',
                     help='Sort all input files. This is necessary if '
                          'the transaction deduplication was skipped on export.')
+parser.add_argument('--chunk-size', type=int, default=10_000,
+                    help='Size of each "batch". Smaller batch are better up to some extent. Should aim for around 10KB but can be tuned as needed')
+parser.add_argument('--read-size', type=int, default=10_000_000,
+                    help='Size to read at at a time from file in bytes. Typical value about 10MB')
+parser.add_argument('--cached-batches', type=int, default=5_000,
+                    help='Number of latest processed batches to keep in memory. About 5000 is good')
+parser.add_argument('--max-queue-size', type=int, default=1_000_000_000,
+                    help='Most important variable for both performance and memory. The higher the better. '
+                         'This is proportional to the memory usage. 5_000_000_000 is about 60G of max RAM used.')
+
+
+class Cache:
+    cumsum_row: List[int]
+    lookup_table: List[int]
+    lookup_keys: List[str]
+    lookup_cursor: int
+
+    cached_batches: List[List[str]]
+    cache_cursor: int
+    cache_txid_start: OrderedDict[str, int]
+    n_cached_batches: int
+    chunk_size: int
+
+    def __init__(self, n_cached_batches: int, chunk_size: int, path_to_output_address: Path):
+        self.cumsum_row = [0]
+        self.lookup_table: List[int] = [0] * n_cached_batches
+        self.lookup_keys: List[str] = [""] * n_cached_batches
+        self.lookup_cursor: int = 0
+
+        self.cached_batches: List[List[str]] = [[] for _ in range(n_cached_batches)]
+        self.cache_cursor = 0
+        self.cache_txid_start: OrderedDict[str, int] = OrderedDict()
+        self.n_cached_batches = n_cached_batches
+        self.chunk_size = chunk_size
+        self.file: typing.BinaryIO = open(path_to_output_address, "rb")
+        self.cache_full = False
+
+    def __del__(self):
+        print("Freeing cache resources")
+        self.file.close()
+
+    def load_indexes(self, output_address_iterator):
+        progress = tqdm(output_address_iterator, desc="Indexing output")
+        for i, (batch, cursor) in enumerate(progress):
+            self.load_batch(batch, cursor, only_index=True)
+            if i % 100 == 0:
+                mb = float(cursor) / 1e3
+                progress.set_postfix({"KB read": "{:,.0f}".format(mb)})
+
+    def get_lookup_index(self, txid_n: str) -> Optional[int]:
+        left = 0
+        right = self.lookup_cursor - 1
+        result = -1  # Default result if no match is found
+
+        # if it's greater, we always return None. If it happens to be in the same batch
+        # as the current greatest batch, it will be caught in the main code
+        if txid_n >= self.lookup_keys[right]:
+            return None
+
+        while left <= right:
+            mid = (left + right) // 2
+
+            if self.lookup_keys[mid] > txid_n:
+                result = mid
+                right = mid - 1
+            else:
+                left = mid + 1
+
+        return result - 1
+
+    # @profile
+    def try_get_cached(self, txid_n: str, index_position: int) -> Optional[str]:
+        cache_idx = self.cache_txid_start.get(self.lookup_keys[index_position])
+        if cache_idx is not None:
+            return self.find_cached_address(cache_idx, txid_n)
+        return None
+
+    # @profile
+    def load_from_file(self, lookup_index: int, txid_n: str, save_batch=True):
+        tell = self.lookup_table[lookup_index]
+        self.file.seek(tell)
+        buffer = self.file.read(self.chunk_size)
+        buffer += self.file.readline()
+        decoded = buffer.decode()
+        batch, cursor = process_chunk(decoded, self.chunk_size, tell)
+        batch_idx = self.load_batch(batch, cursor, save_batch=save_batch)
+        address = self.find_cached_address(batch_idx, txid_n)
+        if address is None:
+            raise IndexError("load_from_file should always find the address")
+        return address
+
+    # @profile
+    def find_cached_address(self, cache_idx: int, txid_n: str) -> Optional[str]:
+        idx = bisect_right_lambda(self.cached_batches[cache_idx], txid_n, lambda arr_, idx_: arr_[idx_][0])
+        x = self.cached_batches[cache_idx][idx - 1]
+        if x[0] == txid_n:
+            return x[1]
+        return None
+
+    # @profile
+    def load_batch(self, batch: List[List[str]], tell: int, only_index: bool = False, save_batch=True):
+        txid_n = batch[0][0]
+
+        # This means it's not already loaded
+        if self.lookup_cursor == 0 or tell > self.lookup_table[self.lookup_cursor - 1]:
+            if (self.lookup_cursor + 1) % self.n_cached_batches == 0:
+                self.lookup_table.extend([0] * self.n_cached_batches)
+                self.lookup_keys.extend([""] * self.n_cached_batches)
+
+            self.lookup_table[self.lookup_cursor] = tell
+            self.lookup_keys[self.lookup_cursor] = txid_n
+            self.lookup_cursor += 1
+
+        if not only_index:
+            # latest batch are automatically loaded in cache
+            self.cache_txid_start[txid_n] = self.cache_cursor
+            if len(self.cache_txid_start) >= self.n_cached_batches:
+                # keep cache of max size self.n_cached_batches
+                self.cache_txid_start.popitem(last=False)
+
+            self.cached_batches[self.cache_cursor] = batch
+            batch_idx = self.cache_cursor
+
+            if save_batch:
+                self.cache_cursor = (self.cache_cursor + 1) % self.n_cached_batches
+                if self.cache_cursor == 0 and not self.cache_full:
+                    self.cache_full = True
+
+            return batch_idx
+
+
+def process_line(line):
+    line = line.strip()
+    idx = line.find(",")
+    return line[:idx], line[idx + 1:]
+
+
+def process_chunk(buffer: str, chunk_size: int, cursor: int):
+    # list comprehensions are known to be faster due to underlying
+    # optimisation done by CPython (not sure about PyPy)
+    return [process_line(line) for line in buffer.split("\n") if line], cursor
+
+
+def read_csv_in_chunks(file, chunk_size: int, read_size: int) -> (List[List[str]], int):  # 10MB
+    s = file.read(read_size)
+    s += file.readline()
+    # batch_str = io.StringIO(s)
+    # batch = io.TextIOWrapper(batch_str, encoding='utf-8')
+    batch = io.BytesIO(s)
+    file_tell = 0
+    while True:
+        buffer = batch.read(chunk_size).decode()
+        cursor = file_tell
+        while buffer:
+            buffer += batch.readline().decode()  # finish the current line
+
+            yield process_chunk(buffer, chunk_size, cursor)
+            cursor = batch.tell() + file_tell
+            buffer = batch.read(chunk_size).decode()
+
+        file_tell = file.tell()
+        tmp = file.read(read_size) + file.readline()
+        if len(tmp) == 0:
+            break
+        batch = io.BytesIO(tmp)
+
+
+def iterate_grouped_outputs(batch):
+    """
+    The batch has structure [[tx1,o11], [tx1,o12], [tx2,o21], [tx3,o31]...]. This generator groups all
+    the outputs by the transaction, and will yield for example
+    [o11,o12],
+    [o21],
+    [o31]
+    """
+    current_tx = None
+    current_group = []
+
+    for item in batch:
+        tx, o = item
+        if tx != current_tx:
+            if current_group:
+                yield current_tx, current_group, False
+            current_tx = tx
+            current_group = []
+        current_group.append(o)
+
+    if current_group:
+        yield current_tx, current_group, True
+
+
+def output_distance(out1, out2):
+    return int(out1[:4], 16) - int(out2[:4], 16)
+
+
+def bisect_right_lambda(a, x, key):
+    """Return the index where to insert item x in list a, assuming a is sorted.
+
+    The return value i is such that all e in a[:i] have e <= x, and all e in
+    a[i:] have e > x.  So if x already appears in the list, a.insert(x) will
+    insert just after the rightmost x already there.
+
+    Optional args lo (default 0) and hi (default len(a)) bound the
+    slice of a to be searched.
+    """
+    lo = 0
+    hi = len(a)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        # Use __lt__ to match the logic in list.sort() and in heapq
+        if x < key(a, mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def get_address_of_output(txid_n: str, cache: Cache, output_address_iterator):
+    idx = cache.get_lookup_index(txid_n)
+    if idx is not None:
+        address = cache.try_get_cached(txid_n, idx)
+        if address is None:
+            try:
+                address = cache.load_from_file(idx, txid_n)
+            except IndexError:
+                # print("Skipped idx found:", txid_n)
+                # Can happen when the address was invalid (I suppose due to
+                # human error in the transaction)
+                return None
+        return address
+    else:
+        # try to get from latest cache
+        if cache.lookup_cursor > 0:
+            tried_lookup = cache.lookup_cursor - 1
+            address = cache.try_get_cached(txid_n, tried_lookup)
+            if address is not None:
+                return address
+
+        for batch, cursor in output_address_iterator:
+            batch_idx = cache.load_batch(batch, cursor)
+            if batch[0][0] <= txid_n <= batch[-1][0]:
+                address = cache.find_cached_address(batch_idx, txid_n)
+                if address is not None:
+                    return address
+            if txid_n < batch[0][0]:
+                # Last chance, we try to get it from file now
+                try:
+                    idx = cache.get_lookup_index(txid_n)
+                    if idx:
+                        address = cache.load_from_file(idx, txid_n)
+                        if address is not None:
+                            return address
+                except IndexError:
+                    # This can happen when the address is "Unknown" (mistake?)
+                    # print("Skipped idx not found:", txid_n)
+                    return None
+
+
+# @profile
+def fill_address_group_for_outputs(outputs: List[str], address_group: typing.Set[str], output_address_iterator,
+                                   cache: Cache):
+    if len(outputs) <= 1:
+        return 0
+
+    skipped = 0
+    for txid_n in outputs:
+        address = get_address_of_output(txid_n, cache, output_address_iterator)
+        if address is not None:
+            address_group.add(address)
+        else:
+            skipped += 1
+    return skipped
+
+
+def flatten_and_sort_with_index(input_list, bar=None):
+    # Step 1: Flatten the list of lists
+    flattened_list = [item for sublist in input_list for item in sublist]
+
+    # Step 2: Create a list of grouping indices
+    index_list = [i for i, sublist in enumerate(input_list) for _ in range(len(sublist))]
+
+    # Step 3: Sort the flattened list
+    sorted_list_with_index = sorted(zip(flattened_list, index_list), key=lambda x: int(x[0][:12], 16))
+
+    # Step 4: Extract the sorted list and the sorted index list
+    sorted_list, sorted_index_list = zip(*sorted_list_with_index)
+
+    return sorted_list, sorted_index_list
+
+
+def group_back_with_index(sorted_list, sorted_index_list):
+    # Combine the sorted list and the index list into pairs
+    combined_list = list(zip(sorted_list, sorted_index_list))
+
+    # Create a dictionary to group the values based on their index
+    grouped_values = {}
+    for value, index in combined_list:
+        if value is None:
+            continue
+        if index not in grouped_values:
+            grouped_values[index] = []
+        grouped_values[index].append(value)
+
+    return grouped_values
+
+
+# @profile
+entity_idx_counter = 0
+counter_joined_entities = 0
+
+
+def process_queue(queued_output_groups: List[List[str]], cache: Cache,
+                  output_address_iterator, input_path):
+    global entity_idx_counter, counter_joined_entities
+    entity_grouping = EntityGrouping()
+    entity_grouping.entity_idx_counter = entity_idx_counter
+    entity_grouping.counter_joined_entities = counter_joined_entities
+
+    bar = tqdm(desc="Sorting queue")
+    start = time.time_ns()
+    queued_output_groups, original_output_idx = flatten_and_sort_with_index(queued_output_groups)
+    tot = (time.time_ns() - start) / 1e9
+    bar.set_postfix({"Time taken": "{:.2f}s".format(tot)})
+    bar.close()
+    # queued_output_groups = sorted(queued_output_groups, key=lambda x: int(x[-1][:5], 16))
+    bar = tqdm(queued_output_groups, unit="output", smoothing=0.1, maxinterval=None)
+    # queued_output_groups.sort(key=lambda x: int(x[-1][:5], 16))
+    bar.set_description("Processing queue")
+
+    last_empty = 0
+    original_output_idx_to_address = [None] * len(original_output_idx)
+    skipped = 0
+    skipped_outputs = []
+    for i, output in enumerate(bar):
+        address = get_address_of_output(output, cache, output_address_iterator)
+        if address is None:
+            skipped += 1
+            skipped_outputs.append(output)
+        original_output_idx_to_address[i] = address
+
+        if i and i % 1000 == 0:
+            bar.set_postfix({
+                # "entities": entity_grouping.entity_idx_counter,
+                # "joined": entity_grouping.counter_joined_entities,
+                "max cached index": cache.cached_batches[cache.cache_cursor - 1][0][0][:6],
+                "cache cursor": cache.cache_cursor,
+                "lookup size": len(cache.lookup_table),
+                "skipped": skipped,
+                "entities": entity_idx_counter,
+                "joined": counter_joined_entities
+            })
+
+    with open(input_path.joinpath("skipped.csv"), "a+") as f_skipped:
+        f_skipped.write("\n".join(skipped_outputs) + "\n")
+
+    bar.set_description("Grouping outputs back")
+    grouped = group_back_with_index(original_output_idx_to_address, original_output_idx)
+    bar.close()
+
+    for (idx, addresses) in tqdm(grouped.items(), desc="Forming entities", total=len(grouped)):
+        entity_grouping.update_from_address_group(addresses)
+        if entity_grouping.entity_idx_counter > last_empty + 400_000:
+            save_entities(entity_grouping.entity_idx_to_addresses, input_path)
+            entity_idx_counter = entity_grouping.entity_idx_counter
+            counter_joined_entities = entity_grouping.counter_joined_entities
+
+            entity_grouping = EntityGrouping()
+            entity_grouping.entity_idx_counter = entity_idx_counter
+            entity_grouping.counter_joined_entities = counter_joined_entities
+            last_empty = entity_idx_counter
+
+    save_entities(entity_grouping.entity_idx_to_addresses, input_path)
+    entity_idx_counter = entity_grouping.entity_idx_counter
+    counter_joined_entities = entity_grouping.counter_joined_entities
+    return len(queued_output_groups)
+
+
+def queue_size(queued_output_groups: List[List[str]]) -> int:
+    # size of outer List + size of inner List
+    return len(queued_output_groups) * (8 + 64) + (8 + 68 + 64) * len(queued_output_groups) * 3
+
+
+def save_entities(entity_idx_to_addresses: typing.Dict[int, typing.Set[str]], input_path: Path):
+    with open(input_path.joinpath(f"rel_entity_address.csv"), "a+") as relationships_csv:
+
+        rel_buffer = ""
+        for entity_id, addresses in entity_idx_to_addresses.items():
+            if addresses is None:
+                continue
+
+            rel_buffer += "".join([f"{entity_id},{a}\n" for a in addresses if a is not None])
+
+            # write the buffer in chunks of 1MB
+            if len(rel_buffer) > 1_000_000:
+                relationships_csv.write(rel_buffer)
+                rel_buffer = ""
+
+        relationships_csv.write(rel_buffer)
+
+
+# @profile
+def process(input_path: Path, chunk_size: int, cached_batches: int, tot: Optional[int], read_size: int,
+            max_queue_size: int):
+    print("Preparing cache")
+    cache = Cache(n_cached_batches=cached_batches, chunk_size=chunk_size,
+                  path_to_output_address=input_path.joinpath('rel_output_address.csv'))
+    print("Cache ready")
+
+    with open(input_path.joinpath("skipped.csv"), "w+") as _:
+        pass
+
+    with open(input_path.joinpath("checkpoint.csv"), "w+") as _:
+        pass
+
+    try:
+        size = os.path.getsize(input_path.joinpath("rel_entity_address.csv"))
+        if size > 100_000:
+            r = input(
+                "The output file rel_entity_address.csv already exists, are you sure you want to overwrite it? [y/n]\n")
+            if r.strip() != "y":
+                print("Stopping process")
+                exit(0)
+            with open(input_path.joinpath("rel_entity_address.csv"), "w+") as _:
+                pass
+
+    except FileNotFoundError:
+        pass
+
+    with open(input_path.joinpath("rel_entity_address_header.csv"), "w+") as header:
+        header.writelines(["entity_id:START_ID(Entity),address:END_ID(Address)"])
+
+    with open(input_path.joinpath("entity_header.csv"), "w+") as header:
+        header.writelines(["entity_id:ID(Entity)"])
+
+    with open(input_path.joinpath('rel_input.csv'), 'rb') as f_rel_input, open(
+            input_path.joinpath('rel_output_address.csv'), 'rb') as f_rel_output_address:
+
+        iteration = 0
+        address_group = set([])
+        skipped = 0
+        total_count_tx = 0
+
+        kwargs = {"unit": 'tx', "mininterval": 1, "smoothing": 0.1, "desc": "Loading queue", "maxinterval": None}
+        if tot is not None:
+            kwargs["total"] = tot
+        bar = tqdm(**kwargs)
+
+        output_address_iterator = read_csv_in_chunks(f_rel_output_address, chunk_size, read_size)
+
+        queued_output_groups = []
+
+        interchunk_transaction_group = None
+        for input_batch, _ in read_csv_in_chunks(f_rel_input, 5_000_000, max(read_size, 1_000_000_000)):
+            count_tx = 0
+            iterator = iterate_grouped_outputs(input_batch)
+
+            if queue_size(queued_output_groups) > max_queue_size:
+                bar.close()
+                with open(input_path.joinpath("checkpoint.csv"), "a+") as f_checkpoint:
+                    f_checkpoint.write(f"{len(queued_output_groups)}\n")
+                process_queue(queued_output_groups, cache, output_address_iterator, input_path)
+                queued_output_groups = []
+                bar = tqdm(**kwargs, initial=total_count_tx)
+
+            for tx, outputs, leftover in iterator:
+                if interchunk_transaction_group is not None:
+                    # We need to do this because a transaction group may be
+                    # split into multiple returned batches
+                    if interchunk_transaction_group[0] != tx:
+                        queued_output_groups.append(interchunk_transaction_group[1])
+                    else:
+                        outputs.extend(interchunk_transaction_group[1])
+
+                    interchunk_transaction_group = None
+
+                if leftover:
+                    interchunk_transaction_group = (tx, outputs)
+                    continue
+
+                if len(outputs) == 1:
+                    count_tx += 1
+                    continue
+
+                outputs.sort()
+                queued_output_groups.append(outputs)
+                count_tx += 1
+
+            # Statistics section
+            bar.update(count_tx)
+            bar.set_postfix({
+                "iteration": iteration,
+                "queue size": "{:.0f}".format(queue_size(queued_output_groups)),
+            })
+
+            total_count_tx += count_tx
+            iteration += 1
+
+        # if len(address_group) > 1:
+        #     entity_grouping.update_from_address_group(list(address_group))
+
+        if interchunk_transaction_group:
+            queued_output_groups.append(interchunk_transaction_group[1])
+
+        if queued_output_groups:
+            processed = process_queue(queued_output_groups, cache, output_address_iterator, input_path)
+            count_tx += processed
+            queued_output_groups = []
+            print("Finished")
+
+    bar.set_postfix({
+        "entities": entity_idx_counter,
+        "joined": counter_joined_entities,
+        "iteration": iteration,
+        "skipped": skipped,
+        "total_tx": total_count_tx
+    })
+
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    bitcoingraph.compute_entities(args.input_path, args.sort_input)
+
+    if args.sort_output:
+        print("Sorting rel_output_address.csv")
+        sort(args.input_path, 'rel_output_address.csv')
+
+    print("Getting upper bound approximate number of transactions for statistics display")
+    tx_path = Path(args.input_path).resolve().joinpath("transactions.csv")
+    tot = int(round(os.path.getsize(tx_path) / 70))
+    print("Found {} transactions".format(tot))
+
+    start = time.time_ns()
+    process(Path(args.input_path).resolve(), args.chunk_size, args.cached_batches, tot, args.read_size,
+            args.max_queue_size)
+    end = time.time_ns()
+    print((end - start) / 1e9)

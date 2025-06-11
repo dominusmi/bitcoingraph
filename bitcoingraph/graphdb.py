@@ -1,7 +1,16 @@
+from bitcoingraph.address import upsert_generated_addresses
+from bitcoingraph.blockchain import BlockchainException
+from bitcoingraph.common import is_pypy
+from bitcoingraph.entities import upsert_entities
+from bitcoingraph.logger import get_logger
+
+if not is_pypy():
+    import neo4j
 
 from bitcoingraph.neo4j import Neo4jController
-from bitcoingraph.helper import to_time, to_json
+from bitcoingraph.helper import to_time
 
+logger = get_logger("graphdb")
 
 def round_value(bitcoin_value):
     return round(bitcoin_value, 8)
@@ -12,7 +21,11 @@ class GraphController:
     rows_per_page_default = 20
 
     def __init__(self, host, port, user, password):
-        self.graph_db = Neo4jController(host, port, user, password)
+        self.driver = neo4j.GraphDatabase.driver(f"bolt://{host}:{port}",
+                                                 auth=(user, password),
+                                                 connection_timeout=3600)
+
+        self.graph_db = Neo4jController(self.driver)
 
     def get_address_info(self, address, date_from=None, date_to=None,
                          rows_per_page=rows_per_page_default):
@@ -79,29 +92,114 @@ class GraphController:
     def delete_identity(self, id):
         self.graph_db.identity_delete_query(id)
 
-    def get_path(self, address1, address2):
-        return Path(self.graph_db.path_query(address1, address2))
-
     def get_max_block_height(self):
         return self.graph_db.get_max_block_height()
 
     def add_block(self, block):
-        print('add block', block.height)
+        block_query = """
+        CREATE (b:Block {hash: $hash, height: $height, timestamp: $timestamp})
+        WITH b
+        OPTIONAL MATCH (bprev:Block {height: $height-1})
+        CALL { 
+            WITH b,bprev
+            WITH b, bprev WHERE bprev is not null
+            CREATE (b)-[:APPENDS]->(bprev)
+        }
+        """
+
+        transaction_query = """
+        UNWIND $transactions as tx
+        MATCH (b:Block {height: $height})
+        CREATE (b)-[:CONTAINS]->(t:Transaction {txid: tx.txid, coinbase: tx.coinbase})
+        """
+
+        input_query = """
+        UNWIND $inputs as input
+        MATCH (o:Output {txid_n: input.txid_n})
+        MATCH (t:Transaction {txid: input.txid})
+        CREATE (o)-[:INPUT]->(t)
+        """
+
+        output_query = """
+        UNWIND $outputs as output
+        CREATE (o:Output {n: output.n, txid_n: output.txid_n, type: output.type, value: output.value})
+        WITH o, output
+        MATCH (t:Transaction {txid: output.txid})
+        CREATE (t)-[:OUTPUT]->(o)
+        """
+
+        address_query = """
+        UNWIND $addresses as address
+        MERGE (a:Address {address: address.address})
+        WITH a, address
+        MATCH (o:Output {txid_n: address.txid_n})
+        CREATE (o)-[:USES]->(a)
+        """
+
         with self.graph_db.transaction() as db_transaction:
-            block_node_id = db_transaction.add_block(block)
-            for index, tx in enumerate(block.transactions):
-                print('add transaction {} of {} (txid: {})'.format(
-                    index + 1, len(block.transactions), tx.txid))
-                tx_node_id = db_transaction.add_transaction(block_node_id, tx)
-                if not tx.is_coinbase():
-                    for input in tx.inputs:
-                        db_transaction.add_input(tx_node_id, input.output_reference)
-                for output in tx.outputs:
-                    output_node_id = db_transaction.add_output(tx_node_id, output)
-                    for address in output.addresses:
-                        db_transaction.add_address(output_node_id, address)
-        print('create entities for block (node id: {})'.format(block_node_id))
-        self.graph_db.create_entities(block_node_id)
+            # block_node_id = db_transaction.add_block(block)
+            transactions = []
+            inputs = []
+            outputs = []
+            addresses = []
+            try:
+                pk_addresses = set([])
+                grouped_addresses_per_tx = []
+
+                logger.info("Preparing DB transaction queries")
+                for index, tx in enumerate(block.transactions):
+                    # tx_node_id = db_transaction.add_transaction(block_node_id, tx)
+                    transactions.append({'txid': tx.txid, 'coinbase': tx.is_coinbase()})
+                    grouped_addresses_per_tx.append(set())
+                    if not tx.is_coinbase():
+                        for input_ in tx.inputs:
+                            inputs.append({
+                                'txid_n': '{}_{}'.format(input_.output_reference.txid, input_.output_reference.index),
+                                'txid': tx.txid
+                            })
+
+                            # db_transaction.add_input(tx_node_id, input.output_reference)
+                            grouped_addresses_per_tx[index].update(input_.output_reference.addresses)
+
+                    for output in tx.outputs:
+                        output_txid_n = '{}_{}'.format(output.txid, output.index)
+                        outputs.append({
+                            'txid_n': output_txid_n, 'n': output.index, 'value': output.value, 'type': output.type,
+                            'txid': output.txid
+                        })
+                        # output_node_id = db_transaction.add_output(tx_node_id, output)
+                        for address in output.addresses:
+                            addresses.append({
+                                "address": address, "txid_n": output_txid_n
+                            })
+                            # db_transaction.add_address(output_node_id, address)
+                            if address.startswith("pk_"):
+                                pk_addresses.add(address)
+
+                logger.debug("Transaction: block")
+                db_transaction.tx.run(
+                    block_query, {'hash': block.hash, 'height': block.height, 'timestamp': block.timestamp}
+                )
+                logger.debug("Transaction: transactions")
+                db_transaction.tx.run(transaction_query, transactions=transactions, height=block.height)
+                logger.debug("Transaction: outputs")
+                db_transaction.tx.run(output_query, outputs=outputs)
+                logger.debug("Transaction: inputs")
+                db_transaction.tx.run(input_query, inputs=inputs)
+                logger.debug("Transaction: addresses")
+                db_transaction.tx.run(address_query, addresses=addresses)
+
+                logger.info("Creating generated addresses transactions")
+                pk_to_addresses = upsert_generated_addresses(db_transaction.tx, pk_addresses)
+                logger.info("Starting entities computations")
+                upsert_entities(db_transaction.tx, grouped_addresses_per_tx, pk_to_addresses)
+                logger.info("Block completed. Saving transactions to database, this may take a few minutes.")
+
+            except BlockchainException as e:
+                if e.inner_exc and e.inner_exc.args and 'genesis' in e.inner_exc.args[0]:
+                    logger.warn("Skipping inputs for genesis block")
+                else:
+                    raise e
 
 
 class Address:
